@@ -51,6 +51,8 @@ CMD_STATUS      = "1"             # status update command code
 CMD_GET_INFO    = "2"             # get probe information command code
 CMD_BLINK_LED   = "3"             # blink LED on PCB command code
 CMD_GET_CONFIG  = "11"            # get configuration command code
+CMD_SET_RES     = "20"            # set resistance command code (value in ohm)
+CMD_SET_CAP     = "21"            # set capacitance command code (value in pF)
 REPLY_STATUS_OK = "0"             # final reply line indicating success
 REPLY_EOT       = "\x04"          # <EOT> acknowledge from action commands (3, 20, 21)
 TIMEOUT_BLINK_S = 5.0             # blink replies only after the ~3 s blink finishes
@@ -183,6 +185,34 @@ def cmd_get_configuration(print_results: bool = True) -> dict[str, float]:
     return config
 
 
+def cmd_set_resistance(ohm: int) -> None:
+    """Set resistance (command 20): expect <EOT> acknowledge then status '0'.
+
+    Probe accepts any value, not just E24; int-only is this script's choice.
+    """
+    send_command(CMD_SET_RES, str(ohm))
+    ack, status = read_reply(2)
+    if ack == REPLY_EOT and status == REPLY_STATUS_OK:
+        print(f"Set resistance: {ohm} ohm OK")
+    else:
+        print(f"Set resistance failed: ack={ack!r} status={status!r}")
+        sys.exit(1)
+
+
+def cmd_set_capacitance(pf: int) -> None:
+    """Set capacitance (command 21): expect <EOT> acknowledge then status '0'.
+
+    Probe accepts any value, not just E24; int-only is this script's choice.
+    """
+    send_command(CMD_SET_CAP, str(pf))
+    ack, status = read_reply(2)
+    if ack == REPLY_EOT and status == REPLY_STATUS_OK:
+        print(f"Set capacitance: {pf} pF OK")
+    else:
+        print(f"Set capacitance failed: ack={ack!r} status={status!r}")
+        sys.exit(1)
+
+
 def close_port() -> None:
     if ser.is_open:
         ser.close()
@@ -202,7 +232,11 @@ def main() -> None:
     # Blink the PCB LED as a visible check
     cmd_blink_led()
     
-    # Read and show the current R/C configuration
+    # Set example resistance and capacitance
+    cmd_set_resistance(10000)
+    cmd_set_capacitance(560)
+
+    # Read and show the current R/C configuration to confirm
     cmd_get_configuration()
     
     # Done - release the port
