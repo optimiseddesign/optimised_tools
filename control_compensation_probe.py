@@ -45,8 +45,9 @@ TX_EOL          = b"\n"           # commands sent with bare LF
 RX_EOL          = b"\r\n"         # reply lines terminated with CR+LF
 
 # --- Protocol constants -------------------------------------------------------
-CMD_STATUS = "1"                  # status update command code
-STATUS_OK  = "0"                  # final reply line indicating success
+CMD_STATUS     = "1"              # status update command code
+CMD_GET_CONFIG = "11"             # get configuration command code
+STATUS_OK      = "0"              # final reply line indicating success
 
 # Single shared port object (used by all functions)
 ser = serial.Serial()
@@ -112,6 +113,32 @@ def cmd_status_update() -> None:
         sys.exit(1)
 
 
+def cmd_get_configuration(print_results: bool = True) -> dict[str, float]:
+    """Get configuration (command 11): return the probe's current R/C values.
+
+    Returns a dict of floats so other functions can use the results, e.g.
+    cmd_get_configuration(print_results=False)["total_resistance_ohm"].
+    """
+    send_command(CMD_GET_CONFIG)
+    *values, status = read_reply(7)
+    if status != STATUS_OK:
+        print(f"Get configuration failed: status={status!r}")
+        sys.exit(1)
+    keys = ("target_resistance_ohm", "cap_resistance_ohm",
+            "array_resistance_ohm", "total_resistance_ohm",
+            "target_capacitance_pf", "total_capacitance_pf")
+    try:
+        config = dict(zip(keys, (float(v) for v in values)))
+    except ValueError:
+        print(f"Get configuration returned non-numeric value(s): {values}")
+        sys.exit(1)
+    if print_results:
+        print("Configuration:")
+        for key, value in config.items():
+            print(f"  {key:<22}: {value:.3f}")
+    return config
+
+
 def close_port() -> None:
     if ser.is_open:
         ser.close()
@@ -123,6 +150,8 @@ def main() -> None:
     open_port()
     # Confirm the probe is alive and talking
     cmd_status_update()
+    # Read and show the current R/C configuration
+    cmd_get_configuration()
     # Done - release the port
     close_port()
 
