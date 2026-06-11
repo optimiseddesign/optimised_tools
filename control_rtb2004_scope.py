@@ -8,8 +8,12 @@ amplitude, sweep range etc.) is assumed to be already set up on the scope.
 Connection:
   - Scope set to USB VCP mode (Setup > Interface > USB > Parameter > USB VCP);
     it appears as a virtual COM port carrying plain ASCII SCPI text.
-  - The same SCPI text works over LAN (raw socket, port 5025), so the
-    transport can be swapped later without touching the command functions.
+  - The same SCPI text works over LAN, so the transport can be swapped later
+    without touching the command functions: all instrument I/O is confined to
+    open_connection(), scpi_send(), scpi_query() and close_connection().
+    Planned LAN transport is the RsInstrument package, whose API maps 1:1
+    (write_str/query_str; resource "TCPIP::<ip>::5025::SOCKET" with
+    SelectVisa='SocketIo' needs no VISA install).
   - Commands are ASCII lines terminated with LF; replies are LF-terminated.
   - SCPI commands from the R&S RTB2 user manual v14 (doc 1333.1611.02),
     Bode plot remote commands chapter 16.8.7.
@@ -36,9 +40,10 @@ TX_EOL          = b"\n"           # commands sent with bare LF
 RX_EOL          = b"\n"           # reply lines terminated with LF
 
 # --- Protocol constants -------------------------------------------------------
-CMD_IDENTIFY    = "*IDN?"         # identity: manufacturer,model,serial,firmware
-CMD_GET_OPTIONS = "*OPT?"         # installed options, comma-separated
-OPTION_BODE     = "K36"           # Bode plot application option (RTB-K36)
+CMD_CLEAR_STATUS = "*CLS"         # clear status registers and error queue
+CMD_IDENTIFY     = "*IDN?"        # identity: manufacturer,model,serial,firmware
+CMD_GET_OPTIONS  = "*OPT?"        # installed options, comma-separated
+OPTION_BODE      = "K36"          # Bode plot application option (RTB-K36)
 
 # Single shared port object (used by all functions)
 ser = serial.Serial()
@@ -64,11 +69,24 @@ def open_connection() -> None:
         print(f"Could not open {COM_PORT}: {exc}")
         sys.exit(1)
     ser.reset_input_buffer()      # purge stale bytes from a previous session
+    # Clear the scope's status/error queue too. Deliberately no *RST: the
+    # signal configuration on the scope must be preserved.
+    scpi_send(CMD_CLEAR_STATUS)
 
 
-def scpi_query(command: str) -> str:
-    """Send a SCPI query and return its one-line reply; print and exit on timeout."""
+def scpi_send(command: str) -> None:
+    """Send a SCPI command that produces no reply."""
     ser.write(command.encode("ascii") + TX_EOL)
+
+
+def scpi_query(command: str, timeout_s: float = TIMEOUT_READ_S) -> str:
+    """Send a SCPI query and return its one-line reply; print and exit on timeout.
+
+    timeout_s allows slow queries (e.g. during a running Bode sweep) to wait
+    longer.
+    """
+    ser.timeout = timeout_s       # applies per query; set on every call
+    scpi_send(command)
     raw = ser.read_until(RX_EOL)  # returns whatever arrived on timeout
     if raw.endswith(RX_EOL):
         return raw.decode("ascii", errors="replace").strip()
