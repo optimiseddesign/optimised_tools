@@ -25,6 +25,7 @@ Copyright Optimised Product Design Ltd 2026. Available for public use
 """
 
 import sys
+import time
 
 import serial
 
@@ -40,10 +41,18 @@ TX_EOL          = b"\n"           # commands sent with bare LF
 RX_EOL          = b"\n"           # reply lines terminated with LF
 
 # --- Protocol constants -------------------------------------------------------
-CMD_CLEAR_STATUS = "*CLS"         # clear status registers and error queue
-CMD_IDENTIFY     = "*IDN?"        # identity: manufacturer,model,serial,firmware
-CMD_GET_OPTIONS  = "*OPT?"        # installed options, comma-separated
-OPTION_BODE      = "K36"          # Bode plot application option (RTB-K36)
+CMD_CLEAR_STATUS   = "*CLS"           # clear status registers and error queue
+CMD_GET_IDENTITY   = "*IDN?"          # manufacturer,model,serial,firmware
+CMD_GET_OPTIONS    = "*OPT?"          # installed options, comma-separated
+CMD_GET_ERROR      = "SYSTem:ERRor?"  # oldest error in the queue; "0,..." = none
+CMD_BODE_ENABLE_ON = "BPLot:ENABle ON"  # opens the Bode plot application
+CMD_BODE_RUN       = "BPLot:STATe RUN"  # starts a Bode sweep
+CMD_BODE_GET_STATE = "BPLot:STATe?"   # sweep state: RUN or STOP
+REPLY_NO_ERROR     = "0,"             # SYSTem:ERRor? reply prefix when queue empty
+REPLY_BODE_STOP    = "STOP"           # BPLot:STATe? reply once the sweep finished
+OPTION_BODE        = "K36"            # Bode plot application option (RTB-K36)
+TIMEOUT_BODE_S     = 600.0            # max sweep time (low start freqs are slow)
+POLL_BODE_S        = 1.0              # interval between sweep-state polls
 
 # Single shared port object (used by all functions)
 ser = serial.Serial()
@@ -95,12 +104,27 @@ def scpi_query(command: str, timeout_s: float = TIMEOUT_READ_S) -> str:
         sys.exit(1)
 
 
+def scpi_set(command: str) -> None:
+    """Send a set command, then check the scope's error queue.
+
+    Set commands produce no reply, so errors (e.g. invalid parameter) would
+    otherwise go unnoticed; print and exit on error.
+    """
+    scpi_send(command)
+    error = scpi_query(CMD_GET_ERROR)
+    if error.startswith(REPLY_NO_ERROR):
+        return                    # command accepted
+    else:
+        print(f"Command {command} failed: {error}")
+        sys.exit(1)
+
+
 def cmd_identify(print_results: bool = True) -> dict[str, str]:
     """Identify the scope (*IDN?) and check the Bode plot option is installed.
 
     Returns a dict of strings so other functions can use the results.
     """
-    identity = scpi_query(CMD_IDENTIFY)
+    identity = scpi_query(CMD_GET_IDENTITY)
     fields = identity.split(",")
     if len(fields) == 4:
         keys = ("manufacturer", "model", "serial", "version_fw")
@@ -123,6 +147,28 @@ def cmd_identify(print_results: bool = True) -> dict[str, str]:
     return info
 
 
+def cmd_bode_run(timeout_s: float = TIMEOUT_BODE_S) -> None:
+    """Run a Bode plot sweep and wait until it completes.
+
+    Sweep duration depends on the frequency range, points per decade and
+    measurement delay configured on the scope, so the default timeout is
+    generous; print and exit if the sweep has not finished in time.
+    """
+    scpi_set(CMD_BODE_ENABLE_ON)  # no-op if the Bode app is already open
+    scpi_set(CMD_BODE_RUN)
+    print(f"Bode sweep running (timeout {timeout_s:.0f} s)")
+
+    start = time.monotonic()
+    while time.monotonic() - start < timeout_s:
+        time.sleep(POLL_BODE_S)       # sleep first so the sweep has begun
+        state = scpi_query(CMD_BODE_GET_STATE)
+        if state == REPLY_BODE_STOP:
+            print(f"Bode sweep complete after {time.monotonic() - start:.1f} s")
+            return
+    print(f"Bode sweep did not complete within {timeout_s:.0f} s")
+    sys.exit(1)
+
+
 def close_connection() -> None:
     if ser.is_open:
         ser.close()
@@ -135,6 +181,9 @@ def main() -> None:
 
     # Confirm the scope is alive and the Bode plot option is present
     cmd_identify()
+
+    # Run a Bode sweep using the signal configuration already on the scope
+    cmd_bode_run()
 
     # Done - release the port
     close_connection()
