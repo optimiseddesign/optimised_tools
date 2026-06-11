@@ -15,13 +15,15 @@ Known commands (reply line count includes the final status line):
   code  args            reply
   1     -               "CompProbe", status            (status update)
   2     -               name, fw ver, hw ver, serial, value?, 2 dates, status
-  3     -               <EOT>, status                  (blink LED on PCB)
-  11    -               target R, cap R, array R, total R [ohm],
-                        target C, total C [pF], status (get configuration)
+  3     -               <EOT>, status                  (blink LED on PCB; replies after ~3 s blink)
+  11    -               target R, cap R, array R, total R [ohm], target C, total C [pF], status (get configuration)
   20    resistance ohm  <EOT>, status                  (set resistance)
   21    capacitance pF  <EOT>, status                  (set capacitance)
 
 Requires: pyserial (pip install pyserial). Python 3.13.
+
+Copyright Optimised Product Design Ltd 2026. Available for public use
+(copyright reserved) - see repository README; use at your own risk.
 """
 
 import sys
@@ -39,15 +41,18 @@ FLOW_RTSCTS     = False           # no hardware flow control
 FLOW_DSRDTR     = False
 DTR_STATE       = True            # probe needs DTR asserted before it responds
 RTS_STATE       = False           # LTPowerAnalyzer keeps RTS off
-READ_TIMEOUT_S  = 1.0             # per-line read timeout (capture used 1000 ms)
-WRITE_TIMEOUT_S = 1.0
+TIMEOUT_READ_S  = 1.0             # per-line read timeout (capture used 1000 ms)
+TIMEOUT_WRITE_S = 1.0
 TX_EOL          = b"\n"           # commands sent with bare LF
 RX_EOL          = b"\r\n"         # reply lines terminated with CR+LF
 
 # --- Protocol constants -------------------------------------------------------
-CMD_STATUS     = "1"              # status update command code
-CMD_GET_CONFIG = "11"             # get configuration command code
-STATUS_OK      = "0"              # final reply line indicating success
+CMD_STATUS      = "1"             # status update command code
+CMD_BLINK_LED   = "3"             # blink LED on PCB command code
+CMD_GET_CONFIG  = "11"            # get configuration command code
+REPLY_STATUS_OK = "0"             # final reply line indicating success
+REPLY_EOT       = "\x04"          # <EOT> acknowledge from action commands (3, 20, 21)
+TIMEOUT_BLINK_S = 5.0             # blink replies only after the ~3 s blink finishes
 
 # Single shared port object (used by all functions)
 ser = serial.Serial()
@@ -65,8 +70,8 @@ def open_port() -> None:
     ser.dsrdtr = FLOW_DSRDTR
     ser.dtr = DTR_STATE           # set before open so lines are correct from
     ser.rts = RTS_STATE           # the first moment
-    ser.timeout = READ_TIMEOUT_S
-    ser.write_timeout = WRITE_TIMEOUT_S
+    ser.timeout = TIMEOUT_READ_S
+    ser.write_timeout = TIMEOUT_WRITE_S
     
     print(f"Opening {COM_PORT} at {BAUD_RATE} baud "
           f"({DATA_BITS}{PARITY}{STOP_BITS}, "
@@ -89,8 +94,12 @@ def send_command(*fields: str) -> None:
         ser.write(field.encode("ascii") + TX_EOL)
 
 
-def read_reply(n_lines: int) -> list[str]:
-    """Read n_lines reply lines, returned stripped; print and exit on timeout."""
+def read_reply(n_lines: int, timeout_s: float = TIMEOUT_READ_S) -> list[str]:
+    """Read n_lines reply lines, returned stripped; print and exit on timeout.
+
+    timeout_s allows slow commands (e.g. blink LED) to wait longer per line.
+    """
+    ser.timeout = timeout_s       # applies per line; set on every call
     lines = []
     for _ in range(n_lines):
         raw = ser.read_until(RX_EOL)  # returns whatever arrived on timeout
@@ -106,11 +115,21 @@ def cmd_status_update() -> None:
     """Status update (command 1): expect 'CompProbe' then status '0'."""
     send_command(CMD_STATUS)
     name, status = read_reply(2)
-    ok = name == "CompProbe" and status == STATUS_OK
+    ok = name == "CompProbe" and status == REPLY_STATUS_OK
     print(f"Status update: name={name!r} status={status!r} -> "
           f"{'OK' if ok else 'UNEXPECTED'}")
     if not ok:
         sys.exit(1)
+
+
+def cmd_blink_led() -> None:
+    """Blink LED on PCB (command 3): expect <EOT> acknowledge then status '0'."""
+    send_command(CMD_BLINK_LED)
+    ack, status = read_reply(2, TIMEOUT_BLINK_S)
+    if ack != REPLY_EOT or status != REPLY_STATUS_OK:
+        print(f"Blink LED failed: ack={ack!r} status={status!r}")
+        sys.exit(1)
+    print("Blink LED: OK (check the PCB)")
 
 
 def cmd_get_configuration(print_results: bool = True) -> dict[str, float]:
@@ -121,7 +140,7 @@ def cmd_get_configuration(print_results: bool = True) -> dict[str, float]:
     """
     send_command(CMD_GET_CONFIG)
     *values, status = read_reply(7)
-    if status != STATUS_OK:
+    if status != REPLY_STATUS_OK:
         print(f"Get configuration failed: status={status!r}")
         sys.exit(1)
     keys = ("target_resistance_ohm", "cap_resistance_ohm",
@@ -148,10 +167,16 @@ def close_port() -> None:
 def main() -> None:
     # Connect to the probe
     open_port()
+    
     # Confirm the probe is alive and talking
     cmd_status_update()
+
+    # Blink the PCB LED as a visible check
+    cmd_blink_led()
+    
     # Read and show the current R/C configuration
     cmd_get_configuration()
+    
     # Done - release the port
     close_port()
 
