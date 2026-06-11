@@ -14,7 +14,7 @@ Protocol:
 Known commands (reply line count includes the final status line):
   code  args            reply
   1     -               "CompProbe", status            (status update)
-  2     -               name, fw ver, hw ver, serial, value?, 2 dates, status
+  2     -               name, fw ver, hw ver, serial, USB power, manufacture date, calibration date, status (get probe information)
   3     -               <EOT>, status                  (blink LED on PCB; replies after ~3 s blink)
   11    -               target R, cap R, array R, total R [ohm], target C, total C [pF], status (get configuration)
   20    resistance ohm  <EOT>, status                  (set resistance)
@@ -48,6 +48,7 @@ RX_EOL          = b"\r\n"         # reply lines terminated with CR+LF
 
 # --- Protocol constants -------------------------------------------------------
 CMD_STATUS      = "1"             # status update command code
+CMD_GET_INFO    = "2"             # get probe information command code
 CMD_BLINK_LED   = "3"             # blink LED on PCB command code
 CMD_GET_CONFIG  = "11"            # get configuration command code
 REPLY_STATUS_OK = "0"             # final reply line indicating success
@@ -122,6 +123,26 @@ def cmd_status_update() -> None:
         sys.exit(1)
 
 
+def cmd_get_probe_info(print_results: bool = True) -> dict[str, str]:
+    """Get probe information (command 2): identity and version details.
+
+    Returns a dict of strings so other functions can use the results.
+    """
+    send_command(CMD_GET_INFO)
+    *values, status = read_reply(8)
+    if status != REPLY_STATUS_OK:
+        print(f"Get probe information failed: status={status!r}")
+        sys.exit(1)
+    keys = ("name", "version_fw", "version_hw", "serial",
+            "usb_power", "date_manufacture", "date_calibration")
+    info = dict(zip(keys, values))
+    if print_results:
+        print("Probe information:")
+        for key, value in info.items():
+            print(f"  {key:<17}: {value}")
+    return info
+
+
 def cmd_blink_led() -> None:
     """Blink LED on PCB (command 3): expect <EOT> acknowledge then status '0'."""
     send_command(CMD_BLINK_LED)
@@ -170,6 +191,9 @@ def main() -> None:
     
     # Confirm the probe is alive and talking
     cmd_status_update()
+
+    # Show the probe's identity and version details
+    cmd_get_probe_info()
 
     # Blink the PCB LED as a visible check
     cmd_blink_led()
