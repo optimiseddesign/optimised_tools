@@ -104,11 +104,12 @@ def read_reply(n_lines: int, timeout_s: float = TIMEOUT_READ_S) -> list[str]:
     lines = []
     for _ in range(n_lines):
         raw = ser.read_until(RX_EOL)  # returns whatever arrived on timeout
-        if not raw.endswith(RX_EOL):
+        if raw.endswith(RX_EOL):
+            lines.append(raw.removesuffix(RX_EOL).decode("ascii", errors="replace"))
+        else:
             print(f"Probe did not respond: got {len(lines)} of {n_lines} "
                   f"line(s) {lines}, then {raw!r}")
             sys.exit(1)
-        lines.append(raw.removesuffix(RX_EOL).decode("ascii", errors="replace"))
     return lines
 
 
@@ -116,10 +117,10 @@ def cmd_status_update() -> None:
     """Status update (command 1): expect 'CompProbe' then status '0'."""
     send_command(CMD_STATUS)
     name, status = read_reply(2)
-    ok = name == "CompProbe" and status == REPLY_STATUS_OK
-    print(f"Status update: name={name!r} status={status!r} -> "
-          f"{'OK' if ok else 'UNEXPECTED'}")
-    if not ok:
+    if name == "CompProbe" and status == REPLY_STATUS_OK:
+        print("Status update: OK")
+    else:
+        print(f"Status update: UNEXPECTED name={name!r} status={status!r}")
         sys.exit(1)
 
 
@@ -130,12 +131,13 @@ def cmd_get_probe_info(print_results: bool = True) -> dict[str, str]:
     """
     send_command(CMD_GET_INFO)
     *values, status = read_reply(8)
-    if status != REPLY_STATUS_OK:
+    if status == REPLY_STATUS_OK:
+        keys = ("name", "version_fw", "version_hw", "serial",
+                "usb_power", "date_manufacture", "date_calibration")
+        info = dict(zip(keys, values))
+    else:
         print(f"Get probe information failed: status={status!r}")
         sys.exit(1)
-    keys = ("name", "version_fw", "version_hw", "serial",
-            "usb_power", "date_manufacture", "date_calibration")
-    info = dict(zip(keys, values))
     if print_results:
         print("Probe information:")
         for key, value in info.items():
@@ -147,10 +149,11 @@ def cmd_blink_led() -> None:
     """Blink LED on PCB (command 3): expect <EOT> acknowledge then status '0'."""
     send_command(CMD_BLINK_LED)
     ack, status = read_reply(2, TIMEOUT_BLINK_S)
-    if ack != REPLY_EOT or status != REPLY_STATUS_OK:
+    if ack == REPLY_EOT and status == REPLY_STATUS_OK:
+        print("Blink LED: OK (check the PCB)")
+    else:
         print(f"Blink LED failed: ack={ack!r} status={status!r}")
         sys.exit(1)
-    print("Blink LED: OK (check the PCB)")
 
 
 def cmd_get_configuration(print_results: bool = True) -> dict[str, float]:
@@ -161,16 +164,17 @@ def cmd_get_configuration(print_results: bool = True) -> dict[str, float]:
     """
     send_command(CMD_GET_CONFIG)
     *values, status = read_reply(7)
-    if status != REPLY_STATUS_OK:
+    if status == REPLY_STATUS_OK:
+        keys = ("target_resistance_ohm", "cap_resistance_ohm",
+                "array_resistance_ohm", "total_resistance_ohm",
+                "target_capacitance_pf", "total_capacitance_pf")
+        try:
+            config = dict(zip(keys, (float(v) for v in values)))
+        except ValueError:
+            print(f"Get configuration returned non-numeric value(s): {values}")
+            sys.exit(1)
+    else:
         print(f"Get configuration failed: status={status!r}")
-        sys.exit(1)
-    keys = ("target_resistance_ohm", "cap_resistance_ohm",
-            "array_resistance_ohm", "total_resistance_ohm",
-            "target_capacitance_pf", "total_capacitance_pf")
-    try:
-        config = dict(zip(keys, (float(v) for v in values)))
-    except ValueError:
-        print(f"Get configuration returned non-numeric value(s): {values}")
         sys.exit(1)
     if print_results:
         print("Configuration:")
