@@ -24,6 +24,8 @@ Copyright Optimised Product Design Ltd 2026. Available for public use
 (copyright reserved) - see repository README; use at your own risk.
 """
 
+import csv
+import math
 import sys
 import time
 
@@ -45,14 +47,31 @@ CMD_CLEAR_STATUS   = "*CLS"           # clear status registers and error queue
 CMD_GET_IDENTITY   = "*IDN?"          # manufacturer,model,serial,firmware
 CMD_GET_OPTIONS    = "*OPT?"          # installed options, comma-separated
 CMD_GET_ERROR      = "SYSTem:ERRor?"  # oldest error in the queue; "0,..." = none
+CMD_FORMAT_ASCII   = "FORMat ASC"     # data queries reply in ASCII, comma-separated
 CMD_BODE_ENABLE_ON = "BPLot:ENABle ON"  # opens the Bode plot application
 CMD_BODE_RUN       = "BPLot:STATe RUN"  # starts a Bode sweep
 CMD_BODE_GET_STATE = "BPLot:STATe?"   # sweep state: RUN or STOP
+CMD_BODE_GET_FREQ  = "BPLot:FREQuency:DATA?"  # comma-separated frequencies, Hz
+CMD_BODE_GET_GAIN  = "BPLot:GAIN:DATA?"       # comma-separated gain values, dB
+CMD_BODE_GET_PHASE = "BPLot:PHASe:DATA?"      # comma-separated phase values, deg
 REPLY_NO_ERROR     = "0,"             # SYSTem:ERRor? reply prefix when queue empty
 REPLY_BODE_STOP    = "STOP"           # BPLot:STATe? reply once the sweep finished
 OPTION_BODE        = "K36"            # Bode plot application option (RTB-K36)
-TIMEOUT_BODE_S     = 600.0            # max sweep time (low start freqs are slow)
+TIMEOUT_BODE_S     = 90.0            # max sweep time (low start freqs are slow)
+TIMEOUT_DATA_S     = 10.0             # data arrays can be tens of kB of ASCII
 POLL_BODE_S        = 1.0              # interval between sweep-state polls
+
+# --- Output configuration ------------------------------------------------------
+CSV_PATH = "bode_result.csv"          # standalone-test output; the sweep
+                                      # orchestrator will own file naming later
+
+# --- Margin computation configuration -------------------------------------------
+MARGIN_FREQ_MIN_HZ  = 500.0           # bounds on the crossover search; tighten
+MARGIN_FREQ_MAX_HZ  = 200e3           # to exclude the noisy sweep extremes
+GAIN_CROSSOVER_DB   = 0.0             # gain crossover threshold
+PHASE_CROSSOVER_DEG = 0.0             # instability point: positive reinforcement
+PHASE_WRAP_STEP_DEG = 180.0           # larger steps between adjacent points are
+                                      # the display wrapping, not crossings
 
 # Single shared port object (used by all functions)
 ser = serial.Serial()
@@ -81,6 +100,9 @@ def open_connection() -> None:
     # Clear the scope's status/error queue too. Deliberately no *RST: the
     # signal configuration on the scope must be preserved.
     scpi_send(CMD_CLEAR_STATUS)
+    # Other software may leave data format as binary (REAL,32); pin it to
+    # ASCII so replies parse as text. Affects remote transfers only.
+    scpi_set(CMD_FORMAT_ASCII)
 
 
 def scpi_send(command: str) -> None:
@@ -169,6 +191,157 @@ def cmd_bode_run(timeout_s: float = TIMEOUT_BODE_S) -> None:
     sys.exit(1)
 
 
+def cmd_bode_get_data(print_results: bool = True) -> dict[str, list[float]]:
+    """Fetch the completed Bode plot: frequency, gain and phase arrays.
+
+    Returns a dict of equal-length lists so other functions can use the
+    results, e.g. cmd_bode_get_data(print_results=False)["gain_db"].
+    """
+    frequency = scpi_query(CMD_BODE_GET_FREQ, TIMEOUT_DATA_S)
+    gain = scpi_query(CMD_BODE_GET_GAIN, TIMEOUT_DATA_S)
+    phase = scpi_query(CMD_BODE_GET_PHASE, TIMEOUT_DATA_S)
+    try:
+        data = {"frequency_hz": [float(value) for value in frequency.split(",")],
+                "gain_db":      [float(value) for value in gain.split(",")],
+                "phase_deg":    [float(value) for value in phase.split(",")]}
+    except ValueError:
+        print("Bode data contained non-numeric value(s) - has a sweep completed?")
+        sys.exit(1)
+
+    n_points = len(data["frequency_hz"])
+    if len(data["gain_db"]) == n_points and len(data["phase_deg"]) == n_points:
+        if print_results:
+            print(f"Bode data: {n_points} points, "
+                  f"{data['frequency_hz'][0]:.6g} Hz to "
+                  f"{data['frequency_hz'][-1]:.6g} Hz")
+    else:
+        print(f"Bode data length mismatch: {n_points} frequency, "
+              f"{len(data['gain_db'])} gain, {len(data['phase_deg'])} phase")
+        sys.exit(1)
+    return data
+
+
+def find_crossings(frequency_hz: list[float],
+                   values: list[float],
+                   threshold: float,
+                   other: list[float],
+                   max_step: float = math.inf) -> list[tuple[float, float]]:
+    """Find every frequency at which values crosses the threshold.
+
+    Samples never land exactly on the zero threshold, so each crossing is a pair
+    of samples straddling it, located by linear interpolation in
+    log10(freq). Returns one pair of values per crossing (frequency, value)
+    - e.g. the phase at a gain crossover.
+
+    Sample pairs stepping by more than max_step are skipped: a wrapped phase
+    display jumps e.g. -179 to +179 deg, which passes the threshold
+    numerically but is not a real crossing.
+    """
+    crossings = []
+    for i in range(len(values) - 1):
+        start = values[i] - threshold
+        end = values[i + 1] - threshold
+        if abs(end - start) > max_step:
+            continue                          # display wrap, not a crossing
+        if start * end < 0.0 or (start == 0.0 and end != 0.0):
+            t = start / (start - end)         # 0..1 position between samples
+            log_f = (math.log10(frequency_hz[i]) * (1.0 - t)
+                     + math.log10(frequency_hz[i + 1]) * t)
+            crossings.append((10.0 ** log_f,
+                              other[i] + t * (other[i + 1] - other[i])))
+    return crossings
+
+
+def compute_bode_margins(data: dict[str, list[float]],
+                         freq_min_hz: float = MARGIN_FREQ_MIN_HZ,
+                         freq_max_hz: float = MARGIN_FREQ_MAX_HZ,
+                         print_results: bool = True) -> dict[str, float | None]:
+    """Compute crossover frequencies and stability margins from Bode data.
+
+    The Bode setup measures loop phase relative to the positive-reinforcement
+    point, so instability is at 0 deg: phase margin = the phase reading at a
+    gain 0 dB crossover, and gain margin = -gain where the phase crosses
+    0 deg. A wave shifted by a whole number of turns reinforces identically,
+    so the criterion applies to the wrapped phase exactly as the scope
+    reports it, and every wrap's 0 deg crossing is found without unwrapping.
+    (The display wraps themselves are skipped via PHASE_WRAP_STEP_DEG; the
+    scope's default -180..+180 deg window keeps the wrap jumps far from
+    0 deg.)
+
+    Noise can make a trace cross more than once; every crossing is evaluated
+    and the worst case (smallest margin) is returned, so false noise
+    crossings can only under-report a margin, never over-report it.
+    freq_min_hz/freq_max_hz bound the search to exclude the noisy sweep
+    extremes. A margin is None when its crossing does not occur within
+    bounds - a legitimate result, not an error.
+    """
+    # Restrict to the requested frequency window (data is in ascending order)
+    in_window = [i for i, f in enumerate(data["frequency_hz"])
+                 if freq_min_hz <= f <= freq_max_hz]
+    window = slice(in_window[0], in_window[-1] + 1)
+    frequency = data["frequency_hz"][window]
+    gain = data["gain_db"][window]
+    phase = data["phase_deg"][window]
+
+    margins: dict[str, float | None] = {
+        "gain_crossover_hz": None,
+        "phase_margin_deg": None,
+        "phase_crossover_hz": None,
+        "gain_margin_db": None}
+
+    gain_crossings = find_crossings(frequency, gain, GAIN_CROSSOVER_DB, phase)
+    if gain_crossings:
+        # Worst case = lowest phase at a crossover = lowest phase margin
+        crossover_hz, phase_at_crossover = min(gain_crossings,
+                                               key=lambda c: c[1])
+        margins["gain_crossover_hz"] = crossover_hz
+        margins["phase_margin_deg"] = phase_at_crossover
+
+    phase_crossings = find_crossings(frequency, phase, PHASE_CROSSOVER_DEG, gain, PHASE_WRAP_STEP_DEG)
+    if phase_crossings:
+        # Worst case = highest gain at a crossover = lowest gain margin
+        crossover_hz, gain_at_crossover = max(phase_crossings,
+                                              key=lambda c: c[1])
+        margins["phase_crossover_hz"] = crossover_hz
+        margins["gain_margin_db"] = -gain_at_crossover
+
+    if print_results:
+        print(f"Bode margins ({len(gain_crossings)} gain and "
+              f"{len(phase_crossings)} phase crossing(s) between "
+              f"{frequency[0]:.6g} Hz and {frequency[-1]:.6g} Hz):")
+        if margins["phase_margin_deg"] is not None:
+            print(f"  gain crossover  : {margins['gain_crossover_hz']:.6g} Hz")
+            print(f"  phase margin    : {margins['phase_margin_deg']:.1f} deg")
+        else:
+            print("  gain crossover  : none (gain does not cross 0 dB)")
+        if margins["gain_margin_db"] is not None:
+            print(f"  phase crossover : {margins['phase_crossover_hz']:.6g} Hz")
+            print(f"  gain margin     : {margins['gain_margin_db']:.1f} dB")
+        else:
+            print("  phase crossover : none (phase does not cross 0 deg)")
+        # Extra crossings are usually noise; list all so the choice is visible
+        if len(gain_crossings) > 1:
+            print("  all gain crossings : " + ", ".join(
+                f"{f:.6g} Hz ({p:.1f} deg)" for f, p in gain_crossings))
+        if len(phase_crossings) > 1:
+            print("  all phase crossings: " + ", ".join(
+                f"{f:.6g} Hz ({-g:.1f} dB)" for f, g in phase_crossings))
+    return margins
+
+
+def save_bode_csv(data: dict[str, list[float]], path: str = CSV_PATH) -> None:
+    """Save Bode data as CSV: header row from the dict keys, one row per point."""
+    try:
+        with open(path, "w", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(data.keys())
+            writer.writerows(zip(*data.values()))
+    except OSError as exc:
+        print(f"Could not write {path}: {exc}")
+        sys.exit(1)
+    print(f"Bode data saved to {path}")
+
+
 def close_connection() -> None:
     if ser.is_open:
         ser.close()
@@ -184,6 +357,15 @@ def main() -> None:
 
     # Run a Bode sweep using the signal configuration already on the scope
     cmd_bode_run()
+
+    # Fetch the resulting frequency/gain/phase arrays
+    data = cmd_bode_get_data()
+
+    # Compute the crossover frequencies and stability margins
+    compute_bode_margins(data)
+
+    # Save the data to a CSV file (simple fixed name for the standalone test)
+    save_bode_csv(data, CSV_PATH)
 
     # Done - release the port
     close_connection()
