@@ -310,6 +310,11 @@ def compute_bode_margins(data: dict[str, list[float]],
     scope's default -180..+180 deg window keeps the wrap jumps far from
     0 deg.)
 
+    Only phase crossings above the gain crossover frequency count for the
+    gain margin: the loop is not made unstable by the phase passing through
+    0 deg before the gain has fallen to 0 dB. With no gain crossover found,
+    no gain margin is reported either.
+
     Noise can make a trace cross more than once; every crossing is evaluated
     and the worst case (smallest margin) is returned, so false noise
     crossings can only under-report a margin, never over-report it.
@@ -340,6 +345,13 @@ def compute_bode_margins(data: dict[str, list[float]],
         margins["phase_margin_deg"] = phase_at_crossover
 
     phase_crossings = find_crossings(frequency, phase, PHASE_CROSSOVER_DEG, gain, PHASE_WRAP_STEP_DEG)
+    # Phase passing 0 deg before gain reaches 0 dB is not an instability, so
+    # only crossings above the gain crossover qualify for the gain margin
+    if margins["gain_crossover_hz"] is not None:
+        phase_crossings = [crossing for crossing in phase_crossings
+                           if crossing[0] > margins["gain_crossover_hz"]]
+    else:
+        phase_crossings = []
     if phase_crossings:
         # Worst case = highest gain at a crossover = lowest gain margin
         crossover_hz, gain_at_crossover = max(phase_crossings,
@@ -360,7 +372,8 @@ def compute_bode_margins(data: dict[str, list[float]],
             print(f"  phase crossover : {margins['phase_crossover_hz']:.6g} Hz")
             print(f"  gain margin     : {margins['gain_margin_db']:.1f} dB")
         else:
-            print("  phase crossover : none (phase does not cross 0 deg)")
+            print("  phase crossover : none (no phase 0 deg crossing above "
+                  "the gain crossover)")
         # Extra crossings are usually noise; list all so the choice is visible
         if len(gain_crossings) > 1:
             print("  all gain crossings : " + ", ".join(
