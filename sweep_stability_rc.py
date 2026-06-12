@@ -11,9 +11,9 @@ and prefixed with the run's start timestamp:
   - a raw Bode CSV per R/C point (frequency/gain/phase);
   - a scope screenshot PNG per R/C point, markers on the crossovers;
   - a summary CSV, one row per point, appended immediately after each point;
-  - three matrix CSVs for graphing (rows = capacitance, columns = resistance):
-    phase margin, gain margin and gain crossover frequency, rewritten in full
-    after each point;
+  - four matrix CSVs for graphing (rows = capacitance, columns = resistance):
+    phase margin, gain margin, gain crossover frequency and phase crossover
+    frequency, rewritten in full after each point;
   - a log.txt of everything the script prints (stderr too, so tracebacks
     and warnings are kept), headed by TEST_DESCRIPTION (a manual note of
     the test circumstances, edited per run).
@@ -62,9 +62,10 @@ PNG_BODE_NAME    = RUN_PREFIX + "_bode_r{r}ohm_c{c}pf.png"  # per-point screensh
 CSV_SUMMARY_NAME = RUN_PREFIX + "_summary.csv"     # one row of margins per point
 LOG_NAME         = RUN_PREFIX + "_log.txt"         # everything the script prints
 CSV_MATRIX_NAMES = {                               # margin key -> matrix file
-    "phase_margin_deg":  RUN_PREFIX + "_phase_margin_deg.csv",
-    "gain_margin_db":    RUN_PREFIX + "_gain_margin_db.csv",
-    "gain_crossover_hz": RUN_PREFIX + "_gain_crossover_hz.csv"}
+    "phase_margin_deg":   RUN_PREFIX + "_phase_margin_deg.csv",
+    "gain_margin_db":     RUN_PREFIX + "_gain_margin_db.csv",
+    "gain_crossover_hz":  RUN_PREFIX + "_gain_crossover_hz.csv",
+    "phase_crossover_hz": RUN_PREFIX + "_phase_crossover_hz.csv"}
 SUMMARY_COLUMNS  = ("timestamp",
                     "target_resistance_ohm", "actual_resistance_ohm",
                     "target_capacitance_pf", "actual_capacitance_pf",
@@ -159,7 +160,7 @@ def append_summary_row(r_ohm: int, c_pf: int,
 
 
 def write_matrix_csvs() -> None:
-    """Rewrite the three margin matrix CSVs from all points measured so far.
+    """Rewrite the four margin matrix CSVs from all points measured so far.
 
     A matrix row is only complete once every resistance for that capacitance
     has been measured, so the files are rewritten in full after each point
