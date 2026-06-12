@@ -6,7 +6,8 @@ control_rtb2004_scope.py runs a Bode plot sweep on the R&S RTB2004 and
 computes the stability margins. Connection settings (COM ports etc.) live in
 the drivers.
 
-Outputs, all prefixed with the run's start timestamp:
+Outputs, all in a <timestamp>_bode_sweep sub-folder and prefixed with the
+run's start timestamp:
   - a raw Bode CSV per R/C point (frequency/gain/phase);
   - a scope screenshot PNG per R/C point, markers on the crossovers;
   - a summary CSV, one row per point, appended immediately after each point;
@@ -32,6 +33,7 @@ Copyright Optimised Product Design Ltd 2026. Available for public use
 
 import csv
 import io
+import os
 import sys
 import time
 
@@ -49,14 +51,16 @@ SWEEP_CAPACITANCE_PF = [2200, 3300, 4700, 6800, 8200]
 
 # --- Output configuration -----------------------------------------------------
 RUN_TIMESTAMP    = time.strftime("%Y%m%d_%H%M%S")  # shared by all files of a run
-CSV_BODE_NAME    = RUN_TIMESTAMP + "_bode_r{r}ohm_c{c}pf.csv"  # per-point raw data
-PNG_BODE_NAME    = RUN_TIMESTAMP + "_bode_r{r}ohm_c{c}pf.png"  # per-point screenshot
-CSV_SUMMARY_NAME = RUN_TIMESTAMP + "_summary.csv"
-LOG_NAME         = RUN_TIMESTAMP + "_log.txt"      # everything the script prints
+RUN_DIR          = RUN_TIMESTAMP + "_bode_sweep"   # sub-folder for all of a run's files
+RUN_PREFIX       = os.path.join(RUN_DIR, RUN_TIMESTAMP)  # folder + filename stem
+CSV_BODE_NAME    = RUN_PREFIX + "_bode_r{r}ohm_c{c}pf.csv"  # per-point raw data
+PNG_BODE_NAME    = RUN_PREFIX + "_bode_r{r}ohm_c{c}pf.png"  # per-point screenshot
+CSV_SUMMARY_NAME = RUN_PREFIX + "_summary.csv"     # one row of margins per point
+LOG_NAME         = RUN_PREFIX + "_log.txt"         # everything the script prints
 CSV_MATRIX_NAMES = {                               # margin key -> matrix file
-    "phase_margin_deg":  RUN_TIMESTAMP + "_phase_margin_deg.csv",
-    "gain_margin_db":    RUN_TIMESTAMP + "_gain_margin_db.csv",
-    "gain_crossover_hz": RUN_TIMESTAMP + "_gain_crossover_hz.csv"}
+    "phase_margin_deg":  RUN_PREFIX + "_phase_margin_deg.csv",
+    "gain_margin_db":    RUN_PREFIX + "_gain_margin_db.csv",
+    "gain_crossover_hz": RUN_PREFIX + "_gain_crossover_hz.csv"}
 SUMMARY_COLUMNS  = ("timestamp",
                     "target_resistance_ohm", "actual_resistance_ohm",
                     "target_capacitance_pf", "actual_capacitance_pf",
@@ -93,8 +97,10 @@ class TeeStream(io.TextIOBase):
 
 
 def open_log() -> None:
-    """Start the run log and record the test circumstances."""
+    """Create the run's output folder, start the log and record the test
+    circumstances."""
     try:
+        os.makedirs(RUN_DIR, exist_ok=True)
         # UTF-8 explicitly: the locale default (cp1252) cannot encode the
         # U+FFFD characters that the drivers' errors="replace" decodes produce
         log_file = open(LOG_NAME, "a", encoding="utf-8")
