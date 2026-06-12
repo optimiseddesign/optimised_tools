@@ -8,6 +8,7 @@ the drivers.
 
 Outputs, all prefixed with the run's start timestamp:
   - a raw Bode CSV per R/C point (frequency/gain/phase);
+  - a scope screenshot PNG per R/C point, markers on the crossovers;
   - a summary CSV, one row per point, appended immediately after each point;
   - three matrix CSVs for graphing (rows = capacitance, columns = resistance):
     phase margin, gain margin and gain crossover frequency, rewritten in full
@@ -34,14 +35,15 @@ import control_compensation_probe as probe
 import control_rtb2004_scope as scope
 
 # --- Sweep configuration ------------------------------------------------------
-# Values to test, manually defined per run (E24 min/max generation planned).
+# Values to test, manually defined per run.
 # Outer loop is capacitance, inner resistance, matching the matrix CSV layout.
-SWEEP_RESISTANCE_OHM = [1000, 10000]
-SWEEP_CAPACITANCE_PF = [100, 560]
+SWEEP_RESISTANCE_OHM = [22000, 33000, 47000, 68000, 100000]
+SWEEP_CAPACITANCE_PF = [2200, 3300, 4700, 6800, 8200]
 
 # --- Output configuration -----------------------------------------------------
 RUN_TIMESTAMP    = time.strftime("%Y%m%d_%H%M%S")  # shared by all files of a run
 CSV_BODE_NAME    = RUN_TIMESTAMP + "_bode_r{r}ohm_c{c}pf.csv"  # per-point raw data
+PNG_BODE_NAME    = RUN_TIMESTAMP + "_bode_r{r}ohm_c{c}pf.png"  # per-point screenshot
 CSV_SUMMARY_NAME = RUN_TIMESTAMP + "_summary.csv"
 CSV_MATRIX_NAMES = {                               # margin key -> matrix file
     "phase_margin_deg":  RUN_TIMESTAMP + "_phase_margin_deg.csv",
@@ -134,6 +136,9 @@ def measure_point(r_ohm: int, c_pf: int) -> None:
     scope.cmd_bode_run()
     data = scope.cmd_bode_get_data()
     margins = scope.compute_bode_margins(data)
+    scope.cmd_bode_set_markers(margins["gain_crossover_hz"],
+                               margins["phase_crossover_hz"])
+    scope.cmd_save_screenshot(PNG_BODE_NAME.format(r=r_ohm, c=c_pf))
     scope.save_bode_csv(data, CSV_BODE_NAME.format(r=r_ohm, c=c_pf))
 
     append_summary_row(r_ohm, c_pf, config, margins)
