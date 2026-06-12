@@ -54,16 +54,27 @@ CMD_BODE_GET_STATE = "BPLot:STATe?"   # sweep state: RUN or STOP
 CMD_BODE_GET_FREQ  = "BPLot:FREQuency:DATA?"  # comma-separated frequencies, Hz
 CMD_BODE_GET_GAIN  = "BPLot:GAIN:DATA?"       # comma-separated gain values, dB
 CMD_BODE_GET_PHASE = "BPLot:PHASe:DATA?"      # comma-separated phase values, deg
+CMD_BODE_MARKER1_FREQ    = "BPLot:MARKer1:FREQuency"   # set marker position, Hz
+CMD_BODE_MARKER2_FREQ    = "BPLot:MARKer2:FREQuency"   # (snaps to nearest sample)
+CMD_BODE_GET_MARK1_FREQ  = "BPLot:MARKer1:FREQuency?"  # actual (snapped) position
+CMD_BODE_GET_MARK2_FREQ  = "BPLot:MARKer2:FREQuency?"
+CMD_BODE_GET_MARK1_GAIN  = "BPLot:MARKer1:GAIN?"       # gain at marker, dB
+CMD_BODE_GET_MARK2_GAIN  = "BPLot:MARKer2:GAIN?"
+CMD_BODE_GET_MARK1_PHASE = "BPLot:MARKer1:PHASe?"      # phase at marker, deg
+CMD_BODE_GET_MARK2_PHASE = "BPLot:MARKer2:PHASe?"
+CMD_SCREENSHOT_FORMAT    = "HCOPy:LANGuage PNG"  # screenshot image format
+CMD_GET_SCREENSHOT       = "HCOPy:DATA?"      # screenshot as 488.2 block data
 REPLY_NO_ERROR     = "0,"             # SYSTem:ERRor? reply prefix when queue empty
 REPLY_BODE_STOP    = "STOP"           # BPLot:STATe? reply once the sweep finished
 OPTION_BODE        = "K36"            # Bode plot application option (RTB-K36)
 TIMEOUT_BODE_S     = 90.0            # max sweep time (low start freqs are slow)
 TIMEOUT_DATA_S     = 10.0             # data arrays can be tens of kB of ASCII
+TIMEOUT_SCREEN_S   = 15.0             # screenshot PNG is tens of kB of binary
 POLL_BODE_S        = 1.0              # interval between sweep-state polls
 
 # --- Output configuration ------------------------------------------------------
-CSV_PATH = "bode_result.csv"          # standalone-test output; the sweep
-                                      # orchestrator will own file naming later
+CSV_PATH        = "bode_result.csv"   # standalone-test outputs; the sweep
+SCREENSHOT_PATH = "bode_result.png"   # orchestrator will own file naming later
 
 # --- Margin computation configuration -------------------------------------------
 MARGIN_FREQ_MIN_HZ  = 500.0           # bounds on the crossover search; tighten
@@ -126,12 +137,43 @@ def scpi_query(command: str, timeout_s: float = TIMEOUT_READ_S) -> str:
         sys.exit(1)
 
 
-def scpi_set(command: str) -> None:
+def scpi_query_block(command: str, timeout_s: float = TIMEOUT_READ_S) -> bytes:
+    """Send a query whose reply is an IEEE 488.2 definite-length binary block.
+
+    Block format: '#', one digit giving the length of the byte count, the
+    byte count, then the raw bytes, then LF. Needed because binary data
+    (e.g. a PNG screenshot) contains stray LF bytes that break the
+    line-based scpi_query(); print and exit on a malformed or short reply.
+    """
+    ser.timeout = timeout_s       # applies to each read below
+    scpi_send(command)
+    header = ser.read(2)          # b'#' then the digit count of the length
+    if not (header.startswith(b"#") and header[1:].isdigit()):
+        print(f"Scope did not return block data for {command}: got {header!r}")
+        sys.exit(1)
+    length = ser.read(int(header[1:]))
+    if not length.isdigit():
+        print(f"Bad block length for {command}: got {length!r}")
+        sys.exit(1)
+    payload = ser.read(int(length))
+    ser.read_until(RX_EOL)        # consume the trailing terminator
+    if len(payload) == int(length):
+        return payload
+    else:
+        print(f"Block data for {command} incomplete: got {len(payload)} of "
+              f"{length.decode()} bytes")
+        sys.exit(1)
+
+
+def scpi_set(command: str, argument: str = "") -> None:
     """Send a set command, then check the scope's error queue.
 
     Set commands produce no reply, so errors (e.g. invalid parameter) would
-    otherwise go unnoticed; print and exit on error.
+    otherwise go unnoticed; print and exit on error. argument, if given, is
+    appended after a space (e.g. a marker frequency).
     """
+    if argument:
+        command = command + " " + argument
     scpi_send(command)
     error = scpi_query(CMD_GET_ERROR)
     if error.startswith(REPLY_NO_ERROR):
@@ -329,6 +371,41 @@ def compute_bode_margins(data: dict[str, list[float]],
     return margins
 
 
+def cmd_bode_set_markers(marker1_hz: float | None,
+                         marker2_hz: float | None) -> None:
+    """Place Bode markers 1 and 2, e.g. on the computed crossover frequencies.
+
+    The scope snaps each marker to the nearest measured sample point; the
+    snapped position and its gain/phase are read back and printed. Pass None
+    to leave a marker untouched (e.g. when a crossover was not found).
+    """
+    if marker1_hz is not None:
+        scpi_set(CMD_BODE_MARKER1_FREQ, str(marker1_hz))
+        actual_hz = scpi_query(CMD_BODE_GET_MARK1_FREQ)
+        gain = scpi_query(CMD_BODE_GET_MARK1_GAIN)
+        phase = scpi_query(CMD_BODE_GET_MARK1_PHASE)
+        print(f"Marker 1 at {actual_hz} Hz: gain {gain} dB, phase {phase} deg")
+    if marker2_hz is not None:
+        scpi_set(CMD_BODE_MARKER2_FREQ, str(marker2_hz))
+        actual_hz = scpi_query(CMD_BODE_GET_MARK2_FREQ)
+        gain = scpi_query(CMD_BODE_GET_MARK2_GAIN)
+        phase = scpi_query(CMD_BODE_GET_MARK2_PHASE)
+        print(f"Marker 2 at {actual_hz} Hz: gain {gain} dB, phase {phase} deg")
+
+
+def cmd_save_screenshot(path: str = SCREENSHOT_PATH) -> None:
+    """Save a screenshot of the scope display to a PNG file."""
+    scpi_set(CMD_SCREENSHOT_FORMAT)   # format persists on the scope; pin it
+    image = scpi_query_block(CMD_GET_SCREENSHOT, TIMEOUT_SCREEN_S)
+    try:
+        with open(path, "wb") as file:
+            file.write(image)
+    except OSError as exc:
+        print(f"Could not write {path}: {exc}")
+        sys.exit(1)
+    print(f"Screenshot saved to {path} ({len(image)} bytes)")
+
+
 def save_bode_csv(data: dict[str, list[float]], path: str = CSV_PATH) -> None:
     """Save Bode data as CSV: header row from the dict keys, one row per point."""
     try:
@@ -362,7 +439,12 @@ def main() -> None:
     data = cmd_bode_get_data()
 
     # Compute the crossover frequencies and stability margins
-    compute_bode_margins(data)
+    margins = compute_bode_margins(data)
+
+    # Put the scope's markers on the crossovers and save a screenshot
+    cmd_bode_set_markers(margins["gain_crossover_hz"],
+                         margins["phase_crossover_hz"])
+    cmd_save_screenshot(SCREENSHOT_PATH)
 
     # Save the data to a CSV file (simple fixed name for the standalone test)
     save_bode_csv(data, CSV_PATH)
