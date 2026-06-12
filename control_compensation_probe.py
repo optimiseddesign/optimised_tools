@@ -76,7 +76,7 @@ def open_port() -> None:
     ser.timeout = TIMEOUT_READ_S
     ser.write_timeout = TIMEOUT_WRITE_S
     
-    print(f"Opening {COM_PORT} at {BAUD_RATE} baud "
+    print(f"Opening Compensation Probe {COM_PORT} at {BAUD_RATE} baud "
           f"({DATA_BITS}{PARITY}{STOP_BITS}, "
           f"DTR={'on' if DTR_STATE else 'off'}, "
           f"RTS={'on' if RTS_STATE else 'off'})")

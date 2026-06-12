@@ -12,7 +12,10 @@ Outputs, all prefixed with the run's start timestamp:
   - a summary CSV, one row per point, appended immediately after each point;
   - three matrix CSVs for graphing (rows = capacitance, columns = resistance):
     phase margin, gain margin and gain crossover frequency, rewritten in full
-    after each point.
+    after each point;
+  - a log.txt of everything the script prints (stderr too, so tracebacks
+    and warnings are kept), headed by TEST_DESCRIPTION (a manual note of
+    the test circumstances, edited per run).
 An interrupted run therefore keeps every completed point on disk.
 
 Scope signal configuration (channels, generator amplitude, sweep range,
@@ -28,6 +31,7 @@ Copyright Optimised Product Design Ltd 2026. Available for public use
 """
 
 import csv
+import io
 import sys
 import time
 
@@ -35,6 +39,9 @@ import control_compensation_probe as probe
 import control_rtb2004_scope as scope
 
 # --- Sweep configuration ------------------------------------------------------
+# Manual note of the test circumstances, logged at the start of the run
+TEST_DESCRIPTION = ("PT136F 1.0 1A Charger based on LTC4020 - Varying ITH, fixed VC 150pF 120k. At 15V In, 0.35A Out.")
+
 # Values to test, manually defined per run.
 # Outer loop is capacitance, inner resistance, matching the matrix CSV layout.
 SWEEP_RESISTANCE_OHM = [22000, 33000, 47000, 68000, 100000]
@@ -45,6 +52,7 @@ RUN_TIMESTAMP    = time.strftime("%Y%m%d_%H%M%S")  # shared by all files of a ru
 CSV_BODE_NAME    = RUN_TIMESTAMP + "_bode_r{r}ohm_c{c}pf.csv"  # per-point raw data
 PNG_BODE_NAME    = RUN_TIMESTAMP + "_bode_r{r}ohm_c{c}pf.png"  # per-point screenshot
 CSV_SUMMARY_NAME = RUN_TIMESTAMP + "_summary.csv"
+LOG_NAME         = RUN_TIMESTAMP + "_log.txt"      # everything the script prints
 CSV_MATRIX_NAMES = {                               # margin key -> matrix file
     "phase_margin_deg":  RUN_TIMESTAMP + "_phase_margin_deg.csv",
     "gain_margin_db":    RUN_TIMESTAMP + "_gain_margin_db.csv",
@@ -59,6 +67,47 @@ MATRIX_CORNER    = "c_pf\\r_ohm"                   # top-left axis-label cell
 # Margins of every completed point, keyed (capacitance pF, resistance ohm);
 # shared so the matrix CSVs can be rewritten in full after each point
 results: dict[tuple[int, int], dict[str, float | None]] = {}
+
+
+class TeeStream(io.TextIOBase):
+    """Stand-in for sys.stdout/stderr that copies everything into the run log.
+
+    All output goes through these two streams - this script's and the
+    drivers' print() calls on stdout; tracebacks and warnings on stderr -
+    so replacing both captures the lot. io.TextIOBase supplies the rest of
+    the file interface for any code that expects more than write/flush.
+    """
+
+    def __init__(self, stream, log_file) -> None:
+        self.stream = stream
+        self.log_file = log_file
+
+    def write(self, text: str) -> int:
+        self.stream.write(text)
+        self.log_file.write(text)
+        self.log_file.flush()     # keep the log complete if the run is interrupted
+        return len(text)
+
+    def flush(self) -> None:
+        self.stream.flush()
+
+
+def open_log() -> None:
+    """Start the run log and record the test circumstances."""
+    try:
+        # UTF-8 explicitly: the locale default (cp1252) cannot encode the
+        # U+FFFD characters that the drivers' errors="replace" decodes produce
+        log_file = open(LOG_NAME, "a", encoding="utf-8")
+    except OSError as exc:
+        print(f"Could not open {LOG_NAME}: {exc}")
+        sys.exit(1)
+    sys.stdout = TeeStream(sys.stdout, log_file)
+    sys.stderr = TeeStream(sys.stderr, log_file)
+    print(f"Sweep run {RUN_TIMESTAMP}, logging to {LOG_NAME}")
+    print(f"Test description: {TEST_DESCRIPTION}")
+    print(f"Sweep resistances : {SWEEP_RESISTANCE_OHM} ohm")
+    print(f"Sweep capacitances: {SWEEP_CAPACITANCE_PF} pF")
+    print(f"\n")
 
 
 def open_instruments() -> None:
@@ -158,6 +207,9 @@ def run_sweep() -> None:
 
 
 def main() -> None:
+    # Start the run log and record the test circumstances
+    open_log()
+
     # Connect to the probe and the scope, and confirm both are alive
     open_instruments()
 

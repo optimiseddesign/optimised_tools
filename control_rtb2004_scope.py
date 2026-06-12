@@ -98,7 +98,7 @@ def open_connection() -> None:
     ser.timeout = TIMEOUT_READ_S
     ser.write_timeout = TIMEOUT_WRITE_S
 
-    print(f"Opening {COM_PORT} at {BAUD_RATE} baud")
+    print(f"Opening Oscilloscope {COM_PORT} at {BAUD_RATE} baud")
 
     try:
         ser.open()                # pyserial asserts DTR/RTS, like a terminal
