@@ -6,8 +6,8 @@ control_rtb2004_scope.py runs a Bode plot sweep on the R&S RTB2004 and
 computes the stability margins. Connection settings (COM ports etc.) live in
 the drivers.
 
-Outputs, all in a <timestamp>_bode_sweep sub-folder and prefixed with the
-run's start timestamp:
+Outputs, all in a sub-folder named <timestamp>_bode_sweep_<TEST_DESCRIPTION_SHORT>
+and prefixed with the run's start timestamp:
   - a raw Bode CSV per R/C point (frequency/gain/phase);
   - a scope screenshot PNG per R/C point, markers on the crossovers;
   - a summary CSV, one row per point, appended immediately after each point;
@@ -42,16 +42,20 @@ import control_rtb2004_scope as scope
 
 # --- Sweep configuration ------------------------------------------------------
 # Manual note of the test circumstances, logged at the start of the run
-TEST_DESCRIPTION = ("PT136F 1.0 1A Charger based on LTC4020 - Varying ITH, fixed VC 150pF 120k. At 15V In, 0.35A Out.")
+TEST_DESCRIPTION = ("PT136F 1.0 1A Charger with LTC4020 (plus Cff 100pF, VIN_REG Disabled, ILIMIT override disabled, VFBMAX 11k 47k for 14.5V) - Varying ITH, fixed VC 150pF 120k. At 9.5V In, 7A Out.")
+
+# Short version used to name the run's output folder (not the files in it);
+# use only characters legal in a folder name (no \ / : * ? " < > |)
+TEST_DESCRIPTION_SHORT = "9V5 In 7A Out - ITH vary with VC 150pF 120k"
 
 # Values to test, manually defined per run.
 # Outer loop is capacitance, inner resistance, matching the matrix CSV layout.
-SWEEP_RESISTANCE_OHM = [22000, 33000, 47000, 68000, 100000]
-SWEEP_CAPACITANCE_PF = [2200, 3300, 4700, 6800, 8200]
+SWEEP_RESISTANCE_OHM = [22000, 27000, 33000, 39000, 47000, 56000, 68000, 82000, 100000]
+SWEEP_CAPACITANCE_PF = [2200, 2700, 3300, 3900, 4700, 5600, 6800, 8200, 10000]
 
 # --- Output configuration -----------------------------------------------------
 RUN_TIMESTAMP    = time.strftime("%Y%m%d_%H%M%S")  # shared by all files of a run
-RUN_DIR          = RUN_TIMESTAMP + "_bode_sweep"   # sub-folder for all of a run's files
+RUN_DIR          = RUN_TIMESTAMP + "_bode_sweep " + TEST_DESCRIPTION_SHORT  # run sub-folder
 RUN_PREFIX       = os.path.join(RUN_DIR, RUN_TIMESTAMP)  # folder + filename stem
 CSV_BODE_NAME    = RUN_PREFIX + "_bode_r{r}ohm_c{c}pf.csv"  # per-point raw data
 PNG_BODE_NAME    = RUN_PREFIX + "_bode_r{r}ohm_c{c}pf.png"  # per-point screenshot
