@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- Stability sweep rig outputs (generated; repo tracks only the tools) -------
+# Per-run output folders: <timestamp>_bode_sweep <description>/
+*_bode_sweep*/
+# Standalone driver test outputs (control_rtb2004_scope.py CSV_PATH/SCREENSHOT_PATH)
+bode_result.csv
+bode_result.png
