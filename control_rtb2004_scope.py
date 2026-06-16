@@ -315,20 +315,18 @@ def compute_bode_margins(data: dict[str, list[float]],
     0 deg before the gain has fallen to 0 dB. With no gain crossover found,
     no gain margin is reported either.
 
-    Noise can make a trace cross more than once; every crossing is evaluated
-    and the worst case (smallest margin) is returned, so false noise
-    crossings can only under-report a margin, never over-report it.
-    freq_min_hz/freq_max_hz bound the search to exclude the noisy sweep
-    extremes. A margin is None when its crossing does not occur within
-    bounds - a legitimate result, not an error.
+    Noise can make a trace cross more than once; every counted crossing is
+    evaluated and the worst case (smallest margin) is returned, so false
+    noise crossings can only under-report a margin, never over-report it.
+    Crossings are searched over the whole sweep, but only those between
+    freq_min_hz and freq_max_hz count towards the margins, excluding the
+    noisy sweep extremes; the printout lists every crossing found, marking
+    the ones that did not count. A margin is None when no crossing counts
+    - a legitimate result, not an error.
     """
-    # Restrict to the requested frequency window (data is in ascending order)
-    in_window = [i for i, f in enumerate(data["frequency_hz"])
-                 if freq_min_hz <= f <= freq_max_hz]
-    window = slice(in_window[0], in_window[-1] + 1)
-    frequency = data["frequency_hz"][window]
-    gain = data["gain_db"][window]
-    phase = data["phase_deg"][window]
+    frequency = data["frequency_hz"]
+    gain = data["gain_db"]
+    phase = data["phase_deg"]
 
     margins: dict[str, float | None] = {
         "gain_crossover_hz": None,
@@ -336,7 +334,9 @@ def compute_bode_margins(data: dict[str, list[float]],
         "phase_crossover_hz": None,
         "gain_margin_db": None}
 
-    gain_crossings = find_crossings(frequency, gain, GAIN_CROSSOVER_DB, phase)
+    gain_crossings_all = find_crossings(frequency, gain, GAIN_CROSSOVER_DB, phase)
+    gain_crossings = [crossing for crossing in gain_crossings_all
+                      if freq_min_hz <= crossing[0] <= freq_max_hz]
     if gain_crossings:
         # Worst case = lowest phase at a crossover = lowest phase margin
         crossover_hz, phase_at_crossover = min(gain_crossings,
@@ -344,12 +344,13 @@ def compute_bode_margins(data: dict[str, list[float]],
         margins["gain_crossover_hz"] = crossover_hz
         margins["phase_margin_deg"] = phase_at_crossover
 
-    phase_crossings = find_crossings(frequency, phase, PHASE_CROSSOVER_DEG, gain, PHASE_WRAP_STEP_DEG)
+    phase_crossings_all = find_crossings(frequency, phase, PHASE_CROSSOVER_DEG, gain, PHASE_WRAP_STEP_DEG)
     # Phase passing 0 deg before gain reaches 0 dB is not an instability, so
     # only crossings above the gain crossover qualify for the gain margin
     if margins["gain_crossover_hz"] is not None:
-        phase_crossings = [crossing for crossing in phase_crossings
-                           if crossing[0] > margins["gain_crossover_hz"]]
+        phase_crossings = [crossing for crossing in phase_crossings_all
+                           if freq_min_hz <= crossing[0] <= freq_max_hz
+                           and crossing[0] > margins["gain_crossover_hz"]]
     else:
         phase_crossings = []
     if phase_crossings:
@@ -361,8 +362,8 @@ def compute_bode_margins(data: dict[str, list[float]],
 
     if print_results:
         print(f"Bode margins ({len(gain_crossings)} gain and "
-              f"{len(phase_crossings)} phase crossing(s) between "
-              f"{frequency[0]:.6g} Hz and {frequency[-1]:.6g} Hz):")
+              f"{len(phase_crossings)} phase crossing(s) counted between "
+              f"{freq_min_hz:.6g} Hz and {freq_max_hz:.6g} Hz):")
         if margins["phase_margin_deg"] is not None:
             print(f"  gain crossover  : {margins['gain_crossover_hz']:.6g} Hz")
             print(f"  phase margin    : {margins['phase_margin_deg']:.1f} deg")
@@ -374,13 +375,19 @@ def compute_bode_margins(data: dict[str, list[float]],
         else:
             print("  phase crossover : none (no phase 0 deg crossing above "
                   "the gain crossover)")
-        # Extra crossings are usually noise; list all so the choice is visible
-        if len(gain_crossings) > 1:
+        # Extra crossings are usually noise; list every crossing in the whole
+        # sweep so the choice is visible, marking those that did not count
+        # (outside freq bounds, or phase crossing below the gain crossover)
+        if len(gain_crossings_all) > 1:
             print("  all gain crossings : " + ", ".join(
-                f"{f:.6g} Hz ({p:.1f} deg)" for f, p in gain_crossings))
-        if len(phase_crossings) > 1:
+                f"{f:.6g} Hz ({p:.1f} deg"
+                f"{'' if (f, p) in gain_crossings else ', not counted'})"
+                for f, p in gain_crossings_all))
+        if len(phase_crossings_all) > 1:
             print("  all phase crossings: " + ", ".join(
-                f"{f:.6g} Hz ({-g:.1f} dB)" for f, g in phase_crossings))
+                f"{f:.6g} Hz ({-g:.1f} dB"
+                f"{'' if (f, g) in phase_crossings else ', not counted'})"
+                for f, g in phase_crossings_all))
     return margins
 
 
