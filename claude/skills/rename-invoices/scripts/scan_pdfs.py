@@ -2,20 +2,25 @@
 """
 Scan a folder of invoice PDFs and emit JSON describing each file.
 
-For each .pdf in the folder (non-recursive by default), outputs:
+For each PDF in the folder (non-recursive by default), outputs:
     - path:            absolute path
     - filename:        basename
     - already_renamed: bool — filename matches the full naming pattern
     - not_ready:       bool — filename starts with a "not yet ready" marker
                                (TO GET, GET-INVOICE, TODO, DRAFT, TEMP, ...)
     - text:            first ~6000 chars of extracted text (empty on error)
+    - text_empty:      bool — extraction succeeded but the PDF carries no text
+                               layer (i.e. a scan/photo). The skill handles
+                               these by reading the PDF directly rather than
+                               skipping them.
     - error:           extraction error message, or null
     - windows_path:    best-effort Windows path (for computer:// links),
                        resolved from the symlink target when possible
                        — null if it couldn't be determined
 
-Files that are not .pdf are silently omitted (this is deliberate —
-the skill ignores .txt notes and other clutter).
+Extension matching is case-insensitive: both .pdf and .PDF are scanned.
+Files with any other extension are silently omitted (this is deliberate —
+the skill ignores .txt notes, image receipts and other clutter).
 
 Usage:
     python3 scan_pdfs.py "<folder>"                 # scan folder
@@ -32,6 +37,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Iterator
 
 # Full naming pattern: YYYY-MM-DD Company [optional seller] - Description - Invoice NUMBER.pdf
 # We use a fairly lax check here; the skill prompt does the "is every field actually
@@ -53,45 +59,73 @@ _NOT_READY_PREFIXES = (
     "WIP",
 )
 
-_MAX_TEXT_CHARS = 6000  # plenty for extracting header fields without bloating context
+# Only these extensions are scanned, compared case-insensitively.
+_PDF_SUFFIXES = (".pdf",)
+
+_MAX_TEXT_CHARS = 10000  # plenty for extracting header fields without bloating context
+_MAX_PAGES = 6  # invoice header fields are always on page 1-2
+_MIN_USEFUL_CHARS = 30  # below this, treat the text layer as absent, not merely short
+_PDFTOTEXT_TIMEOUT_S = 20
+
+
+def _has_usable_text(text: str) -> bool:
+    return len(text.strip()) >= _MIN_USEFUL_CHARS
 
 
 def _extract_text(pdf_path: Path) -> tuple[str, str | None]:
-    """Return (text, error). text is truncated to _MAX_TEXT_CHARS."""
+    """
+    Return (text, error), text truncated to _MAX_TEXT_CHARS.
+
+    An empty text with error=None means extraction worked but the PDF has no
+    text layer (a scan or photo) — the caller reports that as text_empty.
+    """
+    errors: list[str] = []
+    # Text from a tool that ran fine but found nothing. Held back so that a
+    # later pdfplumber failure doesn't get misreported as an extraction error.
+    empty_but_ok: str | None = None
+
     # Prefer pdftotext -layout: fastest, preserves column structure that helps the
     # LLM see where "Sold by" / "Invoice number" etc. sit on the page.
     if shutil.which("pdftotext"):
         try:
             proc = subprocess.run(
-                ["pdftotext", "-layout", "-l", "2", str(pdf_path), "-"],
+                ["pdftotext", "-layout", "-l", str(_MAX_PAGES), str(pdf_path), "-"],
                 capture_output=True,
-                timeout=20,
+                timeout=_PDFTOTEXT_TIMEOUT_S,
                 check=True,
             )
             text = proc.stdout.decode("utf-8", errors="replace")
-            return text[:_MAX_TEXT_CHARS], None
+            if _has_usable_text(text):
+                return text[:_MAX_TEXT_CHARS], None
+            # pdftotext exits 0 on an image-only PDF and prints nothing, so an
+            # empty result here is not an error — but pdfplumber occasionally
+            # recovers text it misses, so fall through and try anyway.
+            empty_but_ok = text
         except subprocess.CalledProcessError as e:
-            # fall through to pdfplumber
-            last_err = f"pdftotext failed: {e.stderr.decode('utf-8', errors='replace')[:200]}"
+            errors.append(
+                f"pdftotext failed: {e.stderr.decode('utf-8', errors='replace')[:200]}"
+            )
         except subprocess.TimeoutExpired:
-            last_err = "pdftotext timed out after 20s"
+            errors.append(f"pdftotext timed out after {_PDFTOTEXT_TIMEOUT_S}s")
         except Exception as e:  # noqa: BLE001
-            last_err = f"pdftotext error: {e}"
+            errors.append(f"pdftotext error: {e}")
     else:
-        last_err = "pdftotext not available"
+        errors.append("pdftotext not available")
 
     # Fallback: pdfplumber
     try:
         import pdfplumber  # type: ignore
 
         with pdfplumber.open(pdf_path) as pdf:
-            chunks = []
-            for page in pdf.pages[:2]:
-                chunks.append(page.extract_text() or "")
-        text = "\n".join(chunks)
-        return text[:_MAX_TEXT_CHARS], None
+            chunks = [(page.extract_text() or "") for page in pdf.pages[:_MAX_PAGES]]
+        return "\n".join(chunks)[:_MAX_TEXT_CHARS], None
     except Exception as e:  # noqa: BLE001
-        return "", f"{last_err}; pdfplumber error: {e}"
+        if empty_but_ok is not None:
+            # pdftotext ran cleanly; the PDF simply has no text layer.
+            return empty_but_ok[:_MAX_TEXT_CHARS], None
+        errors.append(f"pdfplumber error: {e}")
+
+    return "", "; ".join(errors)
 
 
 def _looks_not_ready(filename: str) -> bool:
@@ -126,13 +160,23 @@ def _best_effort_windows_path(pdf_path: Path) -> str | None:
     return None
 
 
+def _iter_pdfs(folder: Path, recursive: bool) -> Iterator[Path]:
+    """
+    Yield PDF files, matching the extension case-insensitively.
+
+    glob("*.pdf") is case-sensitive on Linux and would silently miss the .PDF
+    files that some suppliers hand out, so filter on the suffix instead.
+    """
+    entries = folder.rglob("*") if recursive else folder.iterdir()
+    for entry in entries:
+        if entry.is_file() and entry.suffix.lower() in _PDF_SUFFIXES:
+            yield entry
+
+
 def scan(folder: Path, recursive: bool = False) -> list[dict]:
-    pattern = "**/*.pdf" if recursive else "*.pdf"
     results: list[dict] = []
     # sorted for stable output
-    for pdf in sorted(folder.glob(pattern), key=lambda p: p.name.lower()):
-        if not pdf.is_file():
-            continue
+    for pdf in sorted(_iter_pdfs(folder, recursive), key=lambda p: p.name.lower()):
         text, err = _extract_text(pdf)
         results.append(
             {
@@ -141,6 +185,7 @@ def scan(folder: Path, recursive: bool = False) -> list[dict]:
                 "already_renamed": _looks_renamed(pdf.name),
                 "not_ready": _looks_not_ready(pdf.name),
                 "text": text,
+                "text_empty": err is None and not _has_usable_text(text),
                 "error": err,
                 "windows_path": _best_effort_windows_path(pdf),
             }
