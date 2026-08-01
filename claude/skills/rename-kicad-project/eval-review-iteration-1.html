@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eval Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #faf9f5;
+      --surface: #ffffff;
+      --border: #e8e6dc;
+      --text: #141413;
+      --text-muted: #b0aea5;
+      --accent: #d97757;
+      --accent-hover: #c4613f;
+      --green: #788c5d;
+      --green-bg: #eef2e8;
+      --red: #c44;
+      --red-bg: #fceaea;
+      --header-bg: #141413;
+      --header-text: #faf9f5;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Lora', Georgia, serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .header .instructions {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      margin-top: 0.25rem;
+    }
+    .header .progress {
+      font-size: 0.875rem;
+      opacity: 0.8;
+      text-align: right;
+    }
+
+    /* ---- Main content ---- */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    /* ---- Sections ---- */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      flex-shrink: 0;
+    }
+    .section-header {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .section-body {
+      padding: 1rem;
+    }
+
+    /* ---- Config badge ---- */
+    .config-badge {
+      display: inline-block;
+      padding: 0.2rem 0.625rem;
+      border-radius: 9999px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-left: 0.75rem;
+      vertical-align: middle;
+    }
+    .config-badge.config-primary {
+      background: rgba(33, 150, 243, 0.12);
+      color: #1976d2;
+    }
+    .config-badge.config-baseline {
+      background: rgba(255, 193, 7, 0.15);
+      color: #f57f17;
+    }
+
+    /* ---- Prompt ---- */
+    .prompt-text {
+      white-space: pre-wrap;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+    }
+
+    /* ---- Outputs ---- */
+    .output-file {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .output-file + .output-file {
+      margin-top: 1rem;
+    }
+    .output-file-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .output-file-header .dl-btn {
+      font-size: 0.7rem;
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 500;
+      opacity: 0.8;
+    }
+    .output-file-header .dl-btn:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+    .output-file-content {
+      padding: 0.75rem;
+      overflow-x: auto;
+    }
+    .output-file-content pre {
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    .output-file-content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .output-file-content iframe {
+      width: 100%;
+      height: 600px;
+      border: none;
+    }
+    .output-file-content table {
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      width: 100%;
+    }
+    .output-file-content table td,
+    .output-file-content table th {
+      border: 1px solid var(--border);
+      padding: 0.375rem 0.5rem;
+      text-align: left;
+    }
+    .output-file-content table th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+    .output-file-content .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .output-file-content .download-link:hover {
+      background: var(--border);
+    }
+    .empty-state {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    /* ---- Feedback ---- */
+    .prev-feedback {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.625rem 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .prev-feedback-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.25rem;
+      color: var(--text-muted);
+    }
+    .feedback-textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      resize: vertical;
+      color: var(--text);
+    }
+    .feedback-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .feedback-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      min-height: 1.1em;
+    }
+
+    /* ---- Grades (collapsible) ---- */
+    .grades-toggle {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .grades-toggle:hover {
+      color: var(--accent);
+    }
+    .grades-toggle .arrow {
+      margin-right: 0.5rem;
+      transition: transform 0.15s;
+      font-size: 0.75rem;
+    }
+    .grades-toggle .arrow.open {
+      transform: rotate(90deg);
+    }
+    .grades-content {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .grades-content.open {
+      display: block;
+    }
+    .grades-summary {
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .grade-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .grade-pass { background: var(--green-bg); color: var(--green); }
+    .grade-fail { background: var(--red-bg); color: var(--red); }
+    .assertion-list {
+      list-style: none;
+    }
+    .assertion-item {
+      padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+    .assertion-item:last-child { border-bottom: none; }
+    .assertion-status {
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+    .assertion-status.pass { color: var(--green); }
+    .assertion-status.fail { color: var(--red); }
+    .assertion-evidence {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+      padding-left: 1.5rem;
+    }
+
+    /* ---- View tabs ---- */
+    .view-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .view-tab {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .view-tab:hover { color: var(--text); }
+    .view-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .view-panel { display: none; }
+    .view-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ---- Benchmark view ---- */
+    .benchmark-view {
+      padding: 1.5rem 2rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .benchmark-table {
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.8125rem;
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .benchmark-table th, .benchmark-table td {
+      padding: 0.625rem 0.75rem;
+      text-align: left;
+      border: 1px solid var(--border);
+    }
+    .benchmark-table th {
+      font-family: 'Poppins', sans-serif;
+      background: var(--header-bg);
+      color: var(--header-text);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .benchmark-table tr:hover { background: var(--bg); }
+    .benchmark-table tr.benchmark-row-with { background: rgba(33, 150, 243, 0.06); }
+    .benchmark-table tr.benchmark-row-without { background: rgba(255, 193, 7, 0.06); }
+    .benchmark-table tr.benchmark-row-with:hover { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-without:hover { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-table tr.benchmark-row-avg { font-weight: 600; border-top: 2px solid var(--border); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-with { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-without { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-delta-positive { color: var(--green); font-weight: 600; }
+    .benchmark-delta-negative { color: var(--red); font-weight: 600; }
+    .benchmark-notes {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    .benchmark-notes h3 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+    .benchmark-notes ul {
+      list-style: disc;
+      padding-left: 1.25rem;
+    }
+    .benchmark-notes li {
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      margin-bottom: 0.375rem;
+    }
+    .benchmark-empty {
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+      padding: 3rem;
+    }
+
+    /* ---- Navigation ---- */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .nav-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .nav-btn:hover:not(:disabled) {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .done-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .done-btn:hover {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .done-btn.ready {
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .done-btn.ready:hover {
+      background: var(--accent-hover);
+    }
+    /* ---- Done overlay ---- */
+    .done-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .done-overlay.visible {
+      display: flex;
+    }
+    .done-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 2rem 3rem;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+    }
+    .done-card h2 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .done-card p {
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .done-card .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+    }
+    .done-card button {
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .done-card button:hover {
+      background: var(--bg);
+    }
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 0.625rem 1.25rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 200;
+    }
+    .toast.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" style="height:100vh; display:flex; flex-direction:column;">
+    <div class="header">
+      <div>
+        <h1>Eval Review: <span id="skill-name"></span></h1>
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+      </div>
+      <div class="progress" id="progress"></div>
+    </div>
+
+    <!-- View tabs (only shown when benchmark data exists) -->
+    <div class="view-tabs" id="view-tabs" style="display:none;">
+      <button class="view-tab active" onclick="switchView('outputs')">Outputs</button>
+      <button class="view-tab" onclick="switchView('benchmark')">Benchmark</button>
+    </div>
+
+    <!-- Outputs panel (qualitative review) -->
+    <div class="view-panel active" id="panel-outputs">
+    <div class="main">
+      <!-- Prompt -->
+      <div class="section">
+        <div class="section-header">Prompt <span class="config-badge" id="config-badge" style="display:none;"></span></div>
+        <div class="section-body">
+          <div class="prompt-text" id="prompt-text"></div>
+        </div>
+      </div>
+
+      <!-- Outputs -->
+      <div class="section">
+        <div class="section-header">Output</div>
+        <div class="section-body" id="outputs-body">
+          <div class="empty-state">No output files found</div>
+        </div>
+      </div>
+
+      <!-- Previous Output (collapsible) -->
+      <div class="section" id="prev-outputs-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="togglePrevOutputs()">
+            <span class="arrow" id="prev-outputs-arrow">&#9654;</span>
+            Previous Output
+          </div>
+        </div>
+        <div class="grades-content" id="prev-outputs-content"></div>
+      </div>
+
+      <!-- Grades (collapsible) -->
+      <div class="section" id="grades-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="toggleGrades()">
+            <span class="arrow" id="grades-arrow">&#9654;</span>
+            Formal Grades
+          </div>
+        </div>
+        <div class="grades-content" id="grades-content"></div>
+      </div>
+
+      <!-- Feedback -->
+      <div class="section">
+        <div class="section-header">Your Feedback</div>
+        <div class="section-body">
+          <textarea
+            class="feedback-textarea"
+            id="feedback"
+            placeholder="What do you think of this output? Any issues, suggestions, or things that look great?"
+          ></textarea>
+          <div class="feedback-status" id="feedback-status"></div>
+          <div class="prev-feedback" id="prev-feedback" style="display:none;">
+            <div class="prev-feedback-label">Previous feedback</div>
+            <div id="prev-feedback-text"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav" id="outputs-nav">
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">&#8592; Previous</button>
+      <button class="done-btn" id="done-btn" onclick="showDoneDialog()">Submit All Reviews</button>
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)">Next &#8594;</button>
+    </div>
+    </div><!-- end panel-outputs -->
+
+    <!-- Benchmark panel (quantitative stats) -->
+    <div class="view-panel" id="panel-benchmark">
+      <div class="benchmark-view" id="benchmark-content">
+        <div class="benchmark-empty">No benchmark data available. Run a benchmark to see quantitative results here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Done overlay -->
+  <div class="done-overlay" id="done-overlay">
+    <div class="done-card">
+      <h2>Review Complete</h2>
+      <p>Your feedback has been saved. Go back to your Claude Code session and tell Claude you're done reviewing.</p>
+      <div class="btn-row">
+        <button onclick="closeDoneDialog()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---- Embedded data (injected by generate_review.py) ----
+    const EMBEDDED_DATA = {"skill_name": "rename-kicad-project", "runs": [{"id": "eval-0-with_skill", "prompt": "I need to rename my KiCad project. The folder is at FIXTURE_PATH. Right now the project is called pt240b_acme_temperature_sensor and I'm pivoting it to a humidity sensor \u2014 please rename it to pt240b_acme_humidity_sensor across all the files. The board name in the title block (currently 'Acme Temperature Sensor') should become 'Acme Humidity Sensor'. Update the README too. Don't touch the manufacturing outputs other than their filenames \u2014 those bytes need to stay exactly the same, they're contractual deliverables.", "eval_id": 0, "outputs": [{"name": "file_listing.txt", "type": "text", "content": ".\n./.history\n./.history/design\n./.history/design/pt240b_acme_temperature_sensor_old.kicad_sch\n./README.md\n./design\n./design/fp-lib-table\n./design/pt240b_acme_humidity_sensor.kicad_dru\n./design/pt240b_acme_humidity_sensor.kicad_pcb\n./design/pt240b_acme_humidity_sensor.kicad_pro\n./design/pt240b_acme_humidity_sensor.kicad_sch\n./design/pt240b_acme_humidity_sensor_power.kicad_sch\n./design/~pt240b_acme_temperature_sensor.kicad_pro.lck\n./images\n./images/pt240b_acme_humidity_sensor_bottom.png\n./images/pt240b_acme_humidity_sensor_top.png\n./manufacturing\n./manufacturing/pt240b_acme_humidity_sensor-B_Cu.gbr\n./manufacturing/pt240b_acme_humidity_sensor-F_Cu.gbr\n./manufacturing/pt240b_acme_humidity_sensor-PTH.drl\n./manufacturing/pt240b_acme_humidity_sensor-top-pos.csv\n./manufacturing/pt240b_acme_humidity_sensor_bom.csv\n./mechanical\n./mechanical/pt240b_acme_humidity_sensor.step\n./pt240b_acme_humidity_sensor_layout.pdf\n./pt240b_acme_humidity_sensor_schematic.pdf\n"}, {"name": "git_state.txt", "type": "text", "content": "=== git status ===\nOn branch master\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\trenamed:    design/pt240b_acme_temperature_sensor.kicad_dru -> design/pt240b_acme_humidity_sensor.kicad_dru\n\trenamed:    design/pt240b_acme_temperature_sensor.kicad_pcb -> design/pt240b_acme_humidity_sensor.kicad_pcb\n\trenamed:    design/pt240b_acme_temperature_sensor.kicad_pro -> design/pt240b_acme_humidity_sensor.kicad_pro\n\trenamed:    design/pt240b_acme_temperature_sensor.kicad_sch -> design/pt240b_acme_humidity_sensor.kicad_sch\n\trenamed:    design/pt240b_acme_temperature_sensor_power.kicad_sch -> design/pt240b_acme_humidity_sensor_power.kicad_sch\n\trenamed:    images/pt240b_acme_temperature_sensor_bottom.png -> images/pt240b_acme_humidity_sensor_bottom.png\n\trenamed:    images/pt240b_acme_temperature_sensor_top.png -> images/pt240b_acme_humidity_sensor_top.png\n\trenamed:    manufacturing/pt240b_acme_temperature_sensor-B_Cu.gbr -> manufacturing/pt240b_acme_humidity_sensor-B_Cu.gbr\n\trenamed:    manufacturing/pt240b_acme_temperature_sensor-F_Cu.gbr -> manufacturing/pt240b_acme_humidity_sensor-F_Cu.gbr\n\trenamed:    manufacturing/pt240b_acme_temperature_sensor-PTH.drl -> manufacturing/pt240b_acme_humidity_sensor-PTH.drl\n\trenamed:    manufacturing/pt240b_acme_temperature_sensor-top-pos.csv -> manufacturing/pt240b_acme_humidity_sensor-top-pos.csv\n\trenamed:    manufacturing/pt240b_acme_temperature_sensor_bom.csv -> manufacturing/pt240b_acme_humidity_sensor_bom.csv\n\trenamed:    mechanical/pt240b_acme_temperature_sensor.step -> mechanical/pt240b_acme_humidity_sensor.step\n\trenamed:    pt240b_acme_temperature_sensor_layout.pdf -> pt240b_acme_humidity_sensor_layout.pdf\n\trenamed:    pt240b_acme_temperature_sensor_schematic.pdf -> pt240b_acme_humidity_sensor_schematic.pdf\n\nChanges not staged for commit:\n  (use \"git add <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   README.md\n\tmodified:   design/pt240b_acme_humidity_sensor.kicad_pcb\n\tmodified:   design/pt240b_acme_humidity_sensor.kicad_pro\n\tmodified:   design/pt240b_acme_humidity_sensor.kicad_sch\n\tmodified:   design/pt240b_acme_humidity_sensor_power.kicad_sch\n\n\n=== git diff --stat ===\n ...temperature_sensor.kicad_dru => pt240b_acme_humidity_sensor.kicad_dru} | 0\n ...temperature_sensor.kicad_pcb => pt240b_acme_humidity_sensor.kicad_pcb} | 0\n ...temperature_sensor.kicad_pro => pt240b_acme_humidity_sensor.kicad_pro} | 0\n ...temperature_sensor.kicad_sch => pt240b_acme_humidity_sensor.kicad_sch} | 0\n ...sensor_power.kicad_sch => pt240b_acme_humidity_sensor_power.kicad_sch} | 0\n ...mperature_sensor_bottom.png => pt240b_acme_humidity_sensor_bottom.png} | 0\n ...cme_temperature_sensor_top.png => pt240b_acme_humidity_sensor_top.png} | 0\n ...e_temperature_sensor-B_Cu.gbr => pt240b_acme_humidity_sensor-B_Cu.gbr} | 0\n ...e_temperature_sensor-F_Cu.gbr => pt240b_acme_humidity_sensor-F_Cu.gbr} | 0\n ...cme_temperature_sensor-PTH.drl => pt240b_acme_humidity_sensor-PTH.drl} | 0\n ...erature_sensor-top-pos.csv => pt240b_acme_humidity_sensor-top-pos.csv} | 0\n ...cme_temperature_sensor_bom.csv => pt240b_acme_humidity_sensor_bom.csv} | 0\n ...240b_acme_temperature_sensor.step => pt240b_acme_humidity_sensor.step} | 0\n ...emperature_sensor_layout.pdf => pt240b_acme_humidity_sensor_layout.pdf | 0\n ...ture_sensor_schematic.pdf => pt240b_acme_humidity_sensor_schematic.pdf | 0\n 15 files changed, 0 insertions(+), 0 deletions(-)\n\n=== git diff --stat (unstaged) ===\n README.md                                          |  8 ++++----\n design/pt240b_acme_humidity_sensor.kicad_pcb       |  8 ++++----\n design/pt240b_acme_humidity_sensor.kicad_pro       | 12 ++++++------\n design/pt240b_acme_humidity_sensor.kicad_sch       |  8 ++++----\n design/pt240b_acme_humidity_sensor_power.kicad_sch |  4 ++--\n 5 files changed, 20 insertions(+), 20 deletions(-)\n"}, {"name": "summary.md", "type": "text", "content": "# eval-0 with_skill summary (backfilled)\n\nThe agent ran the rename script and was rate-limited before writing this summary.\nReconstructed from `git status` and the `with_skill/outputs/` artifacts:\n\n- 15 file renames staged (git mv preserved rename tracking)\n- 5 files modified in place (content edits)\n- README.md modified\n- kicad_pro / kicad_sch / kicad_pcb modified with new internal references\n- Manufacturing files (gerbers, drill, csv) renamed only \u2014 contents byte-identical\n- Lock file ~*.kicad_pro.lck and .history/ left untouched\n\nOutputs in this directory: file_listing.txt, git_state.txt\n"}], "grading": {"expectations": [{"text": "No surviving old basename in active filenames", "passed": true, "evidence": "All filenames updated; no occurrences of 'pt240b_acme_temperature_sensor' found."}, {"text": "kicad_pro file(s) parse as valid JSON", "passed": true, "evidence": "1 .kicad_pro file(s) all valid JSON"}, {"text": "Lock files (~*.lck) untouched", "passed": true, "evidence": "1 lock file(s) preserved"}, {"text": ".history/ directory byte-identical to original", "passed": true, "evidence": "1 .history file(s) preserved unchanged"}, {"text": "Manufacturing/binary files byte-identical (renamed only)", "passed": true, "evidence": "All 10 binary file(s) preserved bytewise"}, {"text": "Project ID prefix PT240B preserved in filenames", "passed": true, "evidence": "All 5 kicad sources retain 'pt240b'"}, {"text": "Old basename absent from editable file contents", "passed": true, "evidence": "All editable files updated; no occurrences of 'pt240b_acme_temperature_sensor'"}, {"text": "Old title 'Acme Temperature Sensor' absent from editable contents", "passed": true, "evidence": "All editable files updated; no occurrences of 'Acme Temperature Sensor'"}]}}, {"id": "eval-0-without_skill", "prompt": "I need to rename my KiCad project. The folder is at FIXTURE_PATH. Right now the project is called pt240b_acme_temperature_sensor and I'm pivoting it to a humidity sensor \u2014 please rename it to pt240b_acme_humidity_sensor across all the files. The board name in the title block (currently 'Acme Temperature Sensor') should become 'Acme Humidity Sensor'. Update the README too. Don't touch the manufacturing outputs other than their filenames \u2014 those bytes need to stay exactly the same, they're contractual deliverables.", "eval_id": 0, "outputs": [], "grading": {"expectations": [{"text": "No surviving old basename in active filenames", "passed": false, "evidence": "15 filename(s) still contain 'pt240b_acme_temperature_sensor': pt240b_acme_temperature_sensor_schematic.pdf, pt240b_acme_temperature_sensor_layout.pdf, images/pt240b_acme_temperature_sensor_top.png, images/pt240b_acme_temperature_sensor_bottom.png, manufacturing/pt240b_acme_temperature_sensor_bom.csv"}, {"text": "kicad_pro file(s) parse as valid JSON", "passed": true, "evidence": "1 .kicad_pro file(s) all valid JSON"}, {"text": "Lock files (~*.lck) untouched", "passed": true, "evidence": "1 lock file(s) preserved"}, {"text": ".history/ directory byte-identical to original", "passed": true, "evidence": "1 .history file(s) preserved unchanged"}, {"text": "Manufacturing/binary files byte-identical (renamed only)", "passed": true, "evidence": "All 10 binary file(s) preserved bytewise"}, {"text": "Project ID prefix PT240B preserved in filenames", "passed": true, "evidence": "All 5 kicad sources retain 'pt240b'"}, {"text": "Old basename absent from editable file contents", "passed": false, "evidence": "5 file(s) still contain 'pt240b_acme_temperature_sensor': README.md, design/pt240b_acme_temperature_sensor.kicad_pro, design/pt240b_acme_temperature_sensor.kicad_pcb"}, {"text": "Old title 'Acme Temperature Sensor' absent from editable contents", "passed": false, "evidence": "4 file(s) still contain 'Acme Temperature Sensor': README.md, design/pt240b_acme_temperature_sensor.kicad_pcb, design/pt240b_acme_temperature_sensor_power.kicad_sch"}]}}, {"id": "eval-1-with_skill", "prompt": "Quick one \u2014 I want to rename the files in my KiCad project at FIXTURE_PATH from pt240b_acme_temperature_sensor to pt240b_acme_humidity_sensor, but DON'T touch any of the file contents yet. I'll fix the title block and free text manually in the KiCad UI later. Just the filenames for now.", "eval_id": 1, "outputs": [{"name": "file_listing.txt", "type": "text", "content": ".\n./.history\n./.history/design\n./.history/design/pt240b_acme_temperature_sensor_old.kicad_sch\n./README.md\n./design\n./design/fp-lib-table\n./design/pt240b_acme_humidity_sensor.kicad_dru\n./design/pt240b_acme_humidity_sensor.kicad_pcb\n./design/pt240b_acme_humidity_sensor.kicad_pro\n./design/pt240b_acme_humidity_sensor.kicad_sch\n./design/pt240b_acme_humidity_sensor_power.kicad_sch\n./design/~pt240b_acme_temperature_sensor.kicad_pro.lck\n./images\n./images/pt240b_acme_humidity_sensor_bottom.png\n./images/pt240b_acme_humidity_sensor_top.png\n./manufacturing\n./manufacturing/pt240b_acme_humidity_sensor-B_Cu.gbr\n./manufacturing/pt240b_acme_humidity_sensor-F_Cu.gbr\n./manufacturing/pt240b_acme_humidity_sensor-PTH.drl\n./manufacturing/pt240b_acme_humidity_sensor-top-pos.csv\n./manufacturing/pt240b_acme_humidity_sensor_bom.csv\n./mechanical\n./mechanical/pt240b_acme_humidity_sensor.step\n./pt240b_acme_humidity_sensor_layout.pdf\n./pt240b_acme_humidity_sensor_schematic.pdf\n"}, {"name": "git_state.txt", "type": "text", "content": "On branch master\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\trenamed:    design/pt240b_acme_temperature_sensor.kicad_dru -> design/pt240b_acme_humidity_sensor.kicad_dru\n\trenamed:    design/pt240b_acme_temperature_sensor.kicad_pcb -> design/pt240b_acme_humidity_sensor.kicad_pcb\n\trenamed:    design/pt240b_acme_temperature_sensor.kicad_pro -> design/pt240b_acme_humidity_sensor.kicad_pro\n\trenamed:    design/pt240b_acme_temperature_sensor.kicad_sch -> design/pt240b_acme_humidity_sensor.kicad_sch\n\trenamed:    design/pt240b_acme_temperature_sensor_power.kicad_sch -> design/pt240b_acme_humidity_sensor_power.kicad_sch\n\trenamed:    images/pt240b_acme_temperature_sensor_bottom.png -> images/pt240b_acme_humidity_sensor_bottom.png\n\trenamed:    images/pt240b_acme_temperature_sensor_top.png -> images/pt240b_acme_humidity_sensor_top.png\n\trenamed:    manufacturing/pt240b_acme_temperature_sensor-B_Cu.gbr -> manufacturing/pt240b_acme_humidity_sensor-B_Cu.gbr\n\trenamed:    manufacturing/pt240b_acme_temperature_sensor-F_Cu.gbr -> manufacturing/pt240b_acme_humidity_sensor-F_Cu.gbr\n\trenamed:    manufacturing/pt240b_acme_temperature_sensor-PTH.drl -> manufacturing/pt240b_acme_humidity_sensor-PTH.drl\n\trenamed:    manufacturing/pt240b_acme_temperature_sensor-top-pos.csv -> manufacturing/pt240b_acme_humidity_sensor-top-pos.csv\n\trenamed:    manufacturing/pt240b_acme_temperature_sensor_bom.csv -> manufacturing/pt240b_acme_humidity_sensor_bom.csv\n\trenamed:    mechanical/pt240b_acme_temperature_sensor.step -> mechanical/pt240b_acme_humidity_sensor.step\n\trenamed:    pt240b_acme_temperature_sensor_layout.pdf -> pt240b_acme_humidity_sensor_layout.pdf\n\trenamed:    pt240b_acme_temperature_sensor_schematic.pdf -> pt240b_acme_humidity_sensor_schematic.pdf\n\n\n=== git diff --stat ===\n\n=== git diff --stat --cached ===\n ...temperature_sensor.kicad_dru => pt240b_acme_humidity_sensor.kicad_dru} | 0\n ...temperature_sensor.kicad_pcb => pt240b_acme_humidity_sensor.kicad_pcb} | 0\n ...temperature_sensor.kicad_pro => pt240b_acme_humidity_sensor.kicad_pro} | 0\n ...temperature_sensor.kicad_sch => pt240b_acme_humidity_sensor.kicad_sch} | 0\n ...sensor_power.kicad_sch => pt240b_acme_humidity_sensor_power.kicad_sch} | 0\n ...mperature_sensor_bottom.png => pt240b_acme_humidity_sensor_bottom.png} | 0\n ...cme_temperature_sensor_top.png => pt240b_acme_humidity_sensor_top.png} | 0\n ...e_temperature_sensor-B_Cu.gbr => pt240b_acme_humidity_sensor-B_Cu.gbr} | 0\n ...e_temperature_sensor-F_Cu.gbr => pt240b_acme_humidity_sensor-F_Cu.gbr} | 0\n ...cme_temperature_sensor-PTH.drl => pt240b_acme_humidity_sensor-PTH.drl} | 0\n ...erature_sensor-top-pos.csv => pt240b_acme_humidity_sensor-top-pos.csv} | 0\n ...cme_temperature_sensor_bom.csv => pt240b_acme_humidity_sensor_bom.csv} | 0\n ...240b_acme_temperature_sensor.step => pt240b_acme_humidity_sensor.step} | 0\n ...emperature_sensor_layout.pdf => pt240b_acme_humidity_sensor_layout.pdf | 0\n ...ture_sensor_schematic.pdf => pt240b_acme_humidity_sensor_schematic.pdf | 0\n 15 files changed, 0 insertions(+), 0 deletions(-)\n"}, {"name": "summary.md", "type": "text", "content": "# Rename Summary\n\n## Task\nRename files in the KiCad project from `pt240b_acme_temperature_sensor` to `pt240b_acme_humidity_sensor`. **Filenames only \u2014 no content edits** (user will fix title block and free text manually in KiCad UI later).\n\n## Approach\nUsed the `rename-kicad-project` skill's helper script (`scripts/rename_kicad.py`) with the \"filenames only\" variation documented in the skill:\n\n- `--filename-pair \"pt240b_acme_temperature_sensor=pt240b_acme_humidity_sensor\"` \u2014 restricts the find/replace to filenames.\n- `--no-content` \u2014 explicit belt-and-braces flag to ensure no file contents are touched.\n- Dry-run first to confirm the plan, then live execution.\n\nThe project is a git repo, so `git mv` was used (default behaviour) to preserve rename history.\n\n## What changed\n**15 files renamed** across the following file-classes:\n\n- KiCad sources (rename only \u2014 contents NOT edited per user request): `.kicad_pro`, `.kicad_pcb`, `.kicad_sch` (x2 incl. `_power` sub-sheet), `.kicad_dru`\n- Images: `*_top.png`, `*_bottom.png`\n- Manufacturing artifacts (binary, byte-identical): `-B_Cu.gbr`, `-F_Cu.gbr`, `-PTH.drl`, `-top-pos.csv`, `_bom.csv`\n- Mechanical: `.step`\n- Top-level export PDFs: `_layout.pdf`, `_schematic.pdf`\n\n## What was NOT changed\n- **No file contents edited.** Internal references inside `.kicad_pro`, `.kicad_sch`, `.kicad_pcb` still point to the old basename. The project will not open cleanly in KiCad until those references are fixed (the user said they'll handle this manually in the KiCad UI).\n- `README.md` \u2014 left alone (would normally be edited; skipped because `--no-content` was used).\n- `.history/design/pt240b_acme_temperature_sensor_old.kicad_sch` \u2014 VS Code local-history backup, correctly skipped by the skill.\n- `design/~pt240b_acme_temperature_sensor.kicad_pro.lck` \u2014 KiCad lock file, correctly skipped.\n- `.git/` directory \u2014 untouched.\n\n## Git state\nAll 15 renames are staged as `renamed:` entries (rename-detection found them because `git mv` was used). `git diff --stat --cached` shows 15 files changed, 0 insertions / 0 deletions \u2014 confirming bytes are unchanged, only paths moved. Ready to commit when the user is ready.\n\n## Next steps for the user\n1. Open the renamed project in KiCad. Sheet references will be broken until the title block / sheetfile / project-name strings are updated manually.\n2. Fix the title block and free-text annotations in the schematic and PCB editors.\n3. Re-save in KiCad \u2014 that will rewrite internal references to the new basename.\n4. Commit the rename batch and the post-KiCad-resave changes (the skill recommends keeping these as separate commits for a clean audit trail).\n"}], "grading": {"expectations": [{"text": "No surviving old basename in active filenames", "passed": true, "evidence": "All filenames updated; no occurrences of 'pt240b_acme_temperature_sensor' found."}, {"text": "kicad_pro file(s) parse as valid JSON", "passed": true, "evidence": "1 .kicad_pro file(s) all valid JSON"}, {"text": "Lock files (~*.lck) untouched", "passed": true, "evidence": "1 lock file(s) preserved"}, {"text": ".history/ directory byte-identical to original", "passed": true, "evidence": "1 .history file(s) preserved unchanged"}, {"text": "Manufacturing/binary files byte-identical (renamed only)", "passed": true, "evidence": "All 10 binary file(s) preserved bytewise"}, {"text": "Project ID prefix PT240B preserved in filenames", "passed": true, "evidence": "All 5 kicad sources retain 'pt240b'"}, {"text": "No content edits made (filename-only mode)", "passed": true, "evidence": "No editable files modified (0 edits detected)"}]}}, {"id": "eval-1-without_skill", "prompt": "Quick one \u2014 I want to rename the files in my KiCad project at FIXTURE_PATH from pt240b_acme_temperature_sensor to pt240b_acme_humidity_sensor, but DON'T touch any of the file contents yet. I'll fix the title block and free text manually in the KiCad UI later. Just the filenames for now.", "eval_id": 1, "outputs": [{"name": "file_listing.txt", "type": "text", "content": ".\n./.history\n./.history/design\n./.history/design/pt240b_acme_temperature_sensor_old.kicad_sch\n./README.md\n./design\n./design/fp-lib-table\n./design/pt240b_acme_humidity_sensor.kicad_dru\n./design/pt240b_acme_humidity_sensor.kicad_pcb\n./design/pt240b_acme_humidity_sensor.kicad_pro\n./design/pt240b_acme_humidity_sensor.kicad_sch\n./design/pt240b_acme_humidity_sensor_power.kicad_sch\n./design/~pt240b_acme_temperature_sensor.kicad_pro.lck\n./images\n./images/pt240b_acme_humidity_sensor_bottom.png\n./images/pt240b_acme_humidity_sensor_top.png\n./manufacturing\n./manufacturing/pt240b_acme_humidity_sensor-B_Cu.gbr\n./manufacturing/pt240b_acme_humidity_sensor-F_Cu.gbr\n./manufacturing/pt240b_acme_humidity_sensor-PTH.drl\n./manufacturing/pt240b_acme_humidity_sensor-top-pos.csv\n./manufacturing/pt240b_acme_humidity_sensor_bom.csv\n./mechanical\n./mechanical/pt240b_acme_humidity_sensor.step\n./pt240b_acme_humidity_sensor_layout.pdf\n./pt240b_acme_humidity_sensor_schematic.pdf\n"}, {"name": "git_state.txt", "type": "text", "content": "=== git status ===\nOn branch master\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\trenamed:    design/pt240b_acme_temperature_sensor.kicad_dru -> design/pt240b_acme_humidity_sensor.kicad_dru\n\trenamed:    design/pt240b_acme_temperature_sensor.kicad_pcb -> design/pt240b_acme_humidity_sensor.kicad_pcb\n\trenamed:    design/pt240b_acme_temperature_sensor.kicad_pro -> design/pt240b_acme_humidity_sensor.kicad_pro\n\trenamed:    design/pt240b_acme_temperature_sensor.kicad_sch -> design/pt240b_acme_humidity_sensor.kicad_sch\n\trenamed:    design/pt240b_acme_temperature_sensor_power.kicad_sch -> design/pt240b_acme_humidity_sensor_power.kicad_sch\n\trenamed:    images/pt240b_acme_temperature_sensor_bottom.png -> images/pt240b_acme_humidity_sensor_bottom.png\n\trenamed:    images/pt240b_acme_temperature_sensor_top.png -> images/pt240b_acme_humidity_sensor_top.png\n\trenamed:    manufacturing/pt240b_acme_temperature_sensor-B_Cu.gbr -> manufacturing/pt240b_acme_humidity_sensor-B_Cu.gbr\n\trenamed:    manufacturing/pt240b_acme_temperature_sensor-F_Cu.gbr -> manufacturing/pt240b_acme_humidity_sensor-F_Cu.gbr\n\trenamed:    manufacturing/pt240b_acme_temperature_sensor-PTH.drl -> manufacturing/pt240b_acme_humidity_sensor-PTH.drl\n\trenamed:    manufacturing/pt240b_acme_temperature_sensor-top-pos.csv -> manufacturing/pt240b_acme_humidity_sensor-top-pos.csv\n\trenamed:    manufacturing/pt240b_acme_temperature_sensor_bom.csv -> manufacturing/pt240b_acme_humidity_sensor_bom.csv\n\trenamed:    mechanical/pt240b_acme_temperature_sensor.step -> mechanical/pt240b_acme_humidity_sensor.step\n\trenamed:    pt240b_acme_temperature_sensor_layout.pdf -> pt240b_acme_humidity_sensor_layout.pdf\n\trenamed:    pt240b_acme_temperature_sensor_schematic.pdf -> pt240b_acme_humidity_sensor_schematic.pdf\n\n\n=== git diff --stat HEAD ===\n ...temperature_sensor.kicad_dru => pt240b_acme_humidity_sensor.kicad_dru} | 0\n ...temperature_sensor.kicad_pcb => pt240b_acme_humidity_sensor.kicad_pcb} | 0\n ...temperature_sensor.kicad_pro => pt240b_acme_humidity_sensor.kicad_pro} | 0\n ...temperature_sensor.kicad_sch => pt240b_acme_humidity_sensor.kicad_sch} | 0\n ...sensor_power.kicad_sch => pt240b_acme_humidity_sensor_power.kicad_sch} | 0\n ...mperature_sensor_bottom.png => pt240b_acme_humidity_sensor_bottom.png} | 0\n ...cme_temperature_sensor_top.png => pt240b_acme_humidity_sensor_top.png} | 0\n ...e_temperature_sensor-B_Cu.gbr => pt240b_acme_humidity_sensor-B_Cu.gbr} | 0\n ...e_temperature_sensor-F_Cu.gbr => pt240b_acme_humidity_sensor-F_Cu.gbr} | 0\n ...cme_temperature_sensor-PTH.drl => pt240b_acme_humidity_sensor-PTH.drl} | 0\n ...erature_sensor-top-pos.csv => pt240b_acme_humidity_sensor-top-pos.csv} | 0\n ...cme_temperature_sensor_bom.csv => pt240b_acme_humidity_sensor_bom.csv} | 0\n ...240b_acme_temperature_sensor.step => pt240b_acme_humidity_sensor.step} | 0\n ...emperature_sensor_layout.pdf => pt240b_acme_humidity_sensor_layout.pdf | 0\n ...ture_sensor_schematic.pdf => pt240b_acme_humidity_sensor_schematic.pdf | 0\n 15 files changed, 0 insertions(+), 0 deletions(-)\n"}, {"name": "summary.md", "type": "text", "content": "# KiCad Project Rename Summary\n\nRenamed all project files from the stem `pt240b_acme_temperature_sensor` to `pt240b_acme_humidity_sensor`. **File contents were not modified** \u2014 title block, free text, and any in-file references (e.g. sub-sheet links inside `.kicad_pro` / `.kicad_sch`) still contain the old name and will need to be fixed manually in the KiCad UI as planned.\n\n## Approach\n\n- Used `git mv` for every rename so the moves are tracked as renames in git history rather than delete + add.\n- Skipped the lock file `design/~pt240b_acme_temperature_sensor.kicad_pro.lck` (transient KiCad artefact).\n- Skipped everything under `.history/` (left as-is per instructions).\n- Did not touch `README.md`, `fp-lib-table`, or any other unrelated files.\n\n## Files renamed (15 total)\n\nTop-level (project root):\n- `pt240b_acme_temperature_sensor_layout.pdf` -> `pt240b_acme_humidity_sensor_layout.pdf`\n- `pt240b_acme_temperature_sensor_schematic.pdf` -> `pt240b_acme_humidity_sensor_schematic.pdf`\n\n`design/`:\n- `pt240b_acme_temperature_sensor.kicad_dru` -> `pt240b_acme_humidity_sensor.kicad_dru`\n- `pt240b_acme_temperature_sensor.kicad_pcb` -> `pt240b_acme_humidity_sensor.kicad_pcb`\n- `pt240b_acme_temperature_sensor.kicad_pro` -> `pt240b_acme_humidity_sensor.kicad_pro`\n- `pt240b_acme_temperature_sensor.kicad_sch` -> `pt240b_acme_humidity_sensor.kicad_sch`\n- `pt240b_acme_temperature_sensor_power.kicad_sch` -> `pt240b_acme_humidity_sensor_power.kicad_sch`\n\n`images/`:\n- `pt240b_acme_temperature_sensor_bottom.png` -> `pt240b_acme_humidity_sensor_bottom.png`\n- `pt240b_acme_temperature_sensor_top.png` -> `pt240b_acme_humidity_sensor_top.png`\n\n`manufacturing/`:\n- `pt240b_acme_temperature_sensor-B_Cu.gbr` -> `pt240b_acme_humidity_sensor-B_Cu.gbr`\n- `pt240b_acme_temperature_sensor-F_Cu.gbr` -> `pt240b_acme_humidity_sensor-F_Cu.gbr`\n- `pt240b_acme_temperature_sensor-PTH.drl` -> `pt240b_acme_humidity_sensor-PTH.drl`\n- `pt240b_acme_temperature_sensor-top-pos.csv` -> `pt240b_acme_humidity_sensor-top-pos.csv`\n- `pt240b_acme_temperature_sensor_bom.csv` -> `pt240b_acme_humidity_sensor_bom.csv`\n\n`mechanical/`:\n- `pt240b_acme_temperature_sensor.step` -> `pt240b_acme_humidity_sensor.step`\n\n## Files intentionally left alone\n\n- `design/~pt240b_acme_temperature_sensor.kicad_pro.lck` (KiCad lock file)\n- `.history/design/pt240b_acme_temperature_sensor_old.kicad_sch` (history snapshot)\n- `README.md`, `design/fp-lib-table` (no rename needed)\n\n## Verification\n\n`git status` shows 15 staged renames, all marked as `renamed:` (not delete + add).\n`git diff --stat HEAD` shows `15 files changed, 0 insertions(+), 0 deletions(-)` \u2014 confirming no contents were modified. Changes are staged but not committed.\n\n## Next steps\n\nOpen the project in KiCad and update the title block plus any free-text references on the schematic and PCB. Inside `.kicad_pro` / `.kicad_sch` files there will also be internal name references (e.g. the sheet file pointer that still says `pt240b_acme_temperature_sensor_power.kicad_sch`); KiCad should prompt to repair these when you open the project.\n"}], "grading": {"expectations": [{"text": "No surviving old basename in active filenames", "passed": true, "evidence": "All filenames updated; no occurrences of 'pt240b_acme_temperature_sensor' found."}, {"text": "kicad_pro file(s) parse as valid JSON", "passed": true, "evidence": "1 .kicad_pro file(s) all valid JSON"}, {"text": "Lock files (~*.lck) untouched", "passed": true, "evidence": "1 lock file(s) preserved"}, {"text": ".history/ directory byte-identical to original", "passed": true, "evidence": "1 .history file(s) preserved unchanged"}, {"text": "Manufacturing/binary files byte-identical (renamed only)", "passed": true, "evidence": "All 10 binary file(s) preserved bytewise"}, {"text": "Project ID prefix PT240B preserved in filenames", "passed": true, "evidence": "All 5 kicad sources retain 'pt240b'"}, {"text": "No content edits made (filename-only mode)", "passed": true, "evidence": "No editable files modified (0 edits detected)"}]}}, {"id": "eval-2-with_skill", "prompt": "I'm renaming a real KiCad project at FIXTURE_PATH. It's currently called pt140a_vsmsc_8sim_4g_usb_dongle and I want to rename it to pt140a_vsmsc_8sim_4g_cellular_gateway \u2014 same project ID, just changing the descriptor at the end. The board title in the schematic title_block reads '8-SIM 4G USB Dongle' and should become '8-SIM 4G Cellular Gateway'. There's also free text on the schematic mentioning 'USB Dongle' that should change to 'Cellular Gateway'. The README references the old name in image links and the board-name table cell. Manufacturing files (Gerbers, drill, BOM CSVs, position CSVs, ODB++ zip) need to be renamed but their contents must NOT be modified \u2014 they're already approved deliverables.", "eval_id": 2, "outputs": [{"name": "file_listing.txt", "type": "text", "content": "./.gitignore\n./.gitmodules\n./README.md\n./design/FOOTPRINTS/0480372200.stp\n./design/FOOTPRINTS/SIM-4FF.step\n./design/FOOTPRINTS/SIM-SMD_SMN-303.kicad_mod\n./design/FOOTPRINTS/SIM-SMD_SMN-303.step\n./design/FOOTPRINTS/SMA-SMD_SMA-KE-347-H13.5-1.2.stp\n./design/FOOTPRINTS/SMA-SMD_SMA-KE-347-H13.5-1.6.kicad_mod\n./design/LIBRARIES/SMN-303.kicad_sym\n./design/fp-lib-table\n./design/pt140a_vsmsc_8sim_4g_cellular_gateway.kicad_dru\n./design/pt140a_vsmsc_8sim_4g_cellular_gateway.kicad_pcb\n./design/pt140a_vsmsc_8sim_4g_cellular_gateway.kicad_pro\n./design/pt140a_vsmsc_8sim_4g_cellular_gateway.kicad_sch\n./design/pt140a_vsmsc_8sim_4g_cellular_gateway_latch.kicad_sch\n./design/pt140a_vsmsc_8sim_4g_cellular_gateway_mobcomms.kicad_sch\n./design/pt140a_vsmsc_8sim_4g_cellular_gateway_mux.kicad_sch\n./design/pt140a_vsmsc_8sim_4g_cellular_gateway_powersupply.kicad_sch\n./design/pt140a_vsmsc_8sim_4g_cellular_gateway_sims.kicad_sch\n./design/pt140a_vsmsc_8sim_4g_cellular_gateway_usb.kicad_sch\n./design/sym-lib-table\n./images/pt140a_vsmsc_8sim_4g_cellular_gateway_bottom.png\n./images/pt140a_vsmsc_8sim_4g_cellular_gateway_top.png\n./manufacturing/panel-layout.png\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-B_Cu.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-B_Fab.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-B_Mask.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-B_Paste.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-B_Silkscreen.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-Edge_Cuts.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-F_Cu.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-F_Fab.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-F_Mask.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-F_Paste.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-F_Silkscreen.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-In1_Cu.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-In2_Cu.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-In3_Cu.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-In4_Cu.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-NPTH-drl_map.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-NPTH.drl\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-PTH-drl_map.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-PTH.drl\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-User_Comments.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-User_Drawings.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-User_Eco1.gbr\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-bottom-pos.csv\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-job.gbrjob\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-top-pos.csv\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway_bom_1A.csv\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway_bom_1A_4-SIM.csv\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway_bom_2B_N4-7600A-X.csv\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway_bom_2B_N4-7600E-X.csv\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway_bom_2B_N8-7600A-X.csv\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway_bom_2B_N8-7600E-X.csv\n./manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway_odb.zip\n./manufacturing/required-impedance-control.xlsx\n./mechanical/pt140a_vsmsc_8sim_4g_cellular_gateway.step\n./pt140a_vsmsc_8sim_4g_cellular_gateway_layout.pdf\n./pt140a_vsmsc_8sim_4g_cellular_gateway_schematic.pdf\n./pt140a_vsmsc_8sim_4g_cellular_gateway_schematic_N4-7600A-X.pdf\n./pt140a_vsmsc_8sim_4g_cellular_gateway_schematic_N4-7600E-X.pdf\n./pt140a_vsmsc_8sim_4g_cellular_gateway_schematic_N8-7600A-X.pdf\n./pt140a_vsmsc_8sim_4g_cellular_gateway_schematic_N8-7600E-X.pdf\n./simulation/sim_latchlogic_PWL-A0.txt\n./simulation/sim_latchlogic_PWL-A1.txt\n./simulation/sim_latchlogic_PWL-A2.txt\n./simulation/sim_latchlogic_PWL-EN.txt\n./simulation/sim_latchlogic_PWL-LE.txt\n./simulation/sim_latchlogic_PWL-inputdata.xlsx\n./simulation/sim_latchlogic_d-latch.asc\n./simulation/sim_latchlogic_d-latch.asy\n./simulation/sim_latchlogic_toplevel.asc\n./simulation/sim_latchlogic_toplevel.plt\n"}, {"name": "git_state.txt", "type": "text", "content": "=== git status ===\nOn branch master\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\trenamed:    design/pt140a_vsmsc_8sim_4g_usb_dongle.kicad_dru -> design/pt140a_vsmsc_8sim_4g_cellular_gateway.kicad_dru\n\trenamed:    design/pt140a_vsmsc_8sim_4g_usb_dongle.kicad_pcb -> design/pt140a_vsmsc_8sim_4g_cellular_gateway.kicad_pcb\n\trenamed:    design/pt140a_vsmsc_8sim_4g_usb_dongle.kicad_pro -> design/pt140a_vsmsc_8sim_4g_cellular_gateway.kicad_pro\n\trenamed:    design/pt140a_vsmsc_8sim_4g_usb_dongle.kicad_sch -> design/pt140a_vsmsc_8sim_4g_cellular_gateway.kicad_sch\n\trenamed:    design/pt140a_vsmsc_8sim_4g_usb_dongle_latch.kicad_sch -> design/pt140a_vsmsc_8sim_4g_cellular_gateway_latch.kicad_sch\n\trenamed:    design/pt140a_vsmsc_8sim_4g_usb_dongle_mobcomms.kicad_sch -> design/pt140a_vsmsc_8sim_4g_cellular_gateway_mobcomms.kicad_sch\n\trenamed:    design/pt140a_vsmsc_8sim_4g_usb_dongle_mux.kicad_sch -> design/pt140a_vsmsc_8sim_4g_cellular_gateway_mux.kicad_sch\n\trenamed:    design/pt140a_vsmsc_8sim_4g_usb_dongle_powersupply.kicad_sch -> design/pt140a_vsmsc_8sim_4g_cellular_gateway_powersupply.kicad_sch\n\trenamed:    design/pt140a_vsmsc_8sim_4g_usb_dongle_sims.kicad_sch -> design/pt140a_vsmsc_8sim_4g_cellular_gateway_sims.kicad_sch\n\trenamed:    design/pt140a_vsmsc_8sim_4g_usb_dongle_usb.kicad_sch -> design/pt140a_vsmsc_8sim_4g_cellular_gateway_usb.kicad_sch\n\trenamed:    images/pt140a_vsmsc_8sim_4g_usb_dongle_bottom.png -> images/pt140a_vsmsc_8sim_4g_cellular_gateway_bottom.png\n\trenamed:    images/pt140a_vsmsc_8sim_4g_usb_dongle_top.png -> images/pt140a_vsmsc_8sim_4g_cellular_gateway_top.png\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-B_Cu.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-B_Cu.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-B_Fab.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-B_Fab.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-B_Mask.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-B_Mask.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-B_Paste.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-B_Paste.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-B_Silkscreen.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-B_Silkscreen.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-Edge_Cuts.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-Edge_Cuts.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-F_Cu.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-F_Cu.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-F_Fab.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-F_Fab.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-F_Mask.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-F_Mask.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-F_Paste.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-F_Paste.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-F_Silkscreen.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-F_Silkscreen.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-In1_Cu.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-In1_Cu.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-In2_Cu.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-In2_Cu.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-In3_Cu.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-In3_Cu.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-In4_Cu.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-In4_Cu.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-NPTH-drl_map.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-NPTH-drl_map.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-NPTH.drl -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-NPTH.drl\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-PTH-drl_map.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-PTH-drl_map.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-PTH.drl -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-PTH.drl\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-User_Comments.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-User_Comments.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-User_Drawings.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-User_Drawings.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-User_Eco1.gbr -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-User_Eco1.gbr\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-bottom-pos.csv -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-bottom-pos.csv\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-job.gbrjob -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-job.gbrjob\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle-top-pos.csv -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway-top-pos.csv\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle_bom_1A.csv -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway_bom_1A.csv\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle_bom_1A_4-SIM.csv -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway_bom_1A_4-SIM.csv\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle_bom_2B_N4-7600A-X.csv -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway_bom_2B_N4-7600A-X.csv\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle_bom_2B_N4-7600E-X.csv -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway_bom_2B_N4-7600E-X.csv\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle_bom_2B_N8-7600A-X.csv -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway_bom_2B_N8-7600A-X.csv\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle_bom_2B_N8-7600E-X.csv -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway_bom_2B_N8-7600E-X.csv\n\trenamed:    manufacturing/pt140a_vsmsc_8sim_4g_usb_dongle_odb.zip -> manufacturing/pt140a_vsmsc_8sim_4g_cellular_gateway_odb.zip\n\trenamed:    mechanical/pt140a_vsmsc_8sim_4g_usb_dongle.step -> mechanical/pt140a_vsmsc_8sim_4g_cellular_gateway.step\n\trenamed:    pt140a_vsmsc_8sim_4g_usb_dongle_layout.pdf -> pt140a_vsmsc_8sim_4g_cellular_gateway_layout.pdf\n\trenamed:    pt140a_vsmsc_8sim_4g_usb_dongle_schematic.pdf -> pt140a_vsmsc_8sim_4g_cellular_gateway_schematic.pdf\n\trenamed:    pt140a_vsmsc_8sim_4g_usb_dongle_schematic_N4-7600A-X.pdf -> pt140a_vsmsc_8sim_4g_cellular_gateway_schematic_N4-7600A-X.pdf\n\trenamed:    pt140a_vsmsc_8sim_4g_usb_dongle_schematic_N4-7600E-X.pdf -> pt140a_vsmsc_8sim_4g_cellular_gateway_schematic_N4-7600E-X.pdf\n\trenamed:    pt140a_vsmsc_8sim_4g_usb_dongle_schematic_N8-7600A-X.pdf -> pt140a_vsmsc_8sim_4g_cellular_gateway_schematic_N8-7600A-X.pdf\n\trenamed:    pt140a_vsmsc_8sim_4g_usb_dongle_schematic_N8-7600E-X.pdf -> pt140a_vsmsc_8sim_4g_cellular_gateway_schematic_N8-7600E-X.pdf\n\nChanges not staged for commit:\n  (use \"git add <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   README.md\n\tmodified:   design/pt140a_vsmsc_8sim_4g_cellular_gateway.kicad_pcb\n\tmodified:   design/pt140a_vsmsc_8sim_4g_cellular_gateway.kicad_pro\n\tmodified:   design/pt140a_vsmsc_8sim_4g_cellular_gateway.kicad_sch\n\tmodified:   design/pt140a_vsmsc_8sim_4g_cellular_gateway_latch.kicad_sch\n\tmodified:   design/pt140a_vsmsc_8sim_4g_cellular_gateway_mobcomms.kicad_sch\n\tmodified:   design/pt140a_vsmsc_8sim_4g_cellular_gateway_mux.kicad_sch\n\tmodified:   design/pt140a_vsmsc_8sim_4g_cellular_gateway_powersupply.kicad_sch\n\tmodified:   design/pt140a_vsmsc_8sim_4g_cellular_gateway_sims.kicad_sch\n\tmodified:   design/pt140a_vsmsc_8sim_4g_cellular_gateway_usb.kicad_sch\n\n\n=== git diff --stat ===\n README.md                                          |      8 +-\n ...t140a_vsmsc_8sim_4g_cellular_gateway.kicad_dru} |      0\n ...t140a_vsmsc_8sim_4g_cellular_gateway.kicad_pcb} | 427946 +++++++++---------\n ...t140a_vsmsc_8sim_4g_cellular_gateway.kicad_pro} |     12 +-\n ...t140a_vsmsc_8sim_4g_cellular_gateway.kicad_sch} |  10892 +-\n ...vsmsc_8sim_4g_cellular_gateway_latch.kicad_sch} |  28462 +-\n ...sc_8sim_4g_cellular_gateway_mobcomms.kicad_sch} |  60328 +--\n ...a_vsmsc_8sim_4g_cellular_gateway_mux.kicad_sch} |  29742 +-\n ...8sim_4g_cellular_gateway_powersupply.kicad_sch} |  23456 +-\n ..._vsmsc_8sim_4g_cellular_gateway_sims.kicad_sch} |  10672 +-\n ...a_vsmsc_8sim_4g_cellular_gateway_usb.kicad_sch} |   7286 +-\n ...140a_vsmsc_8sim_4g_cellular_gateway_bottom.png} |    Bin\n ... pt140a_vsmsc_8sim_4g_cellular_gateway_top.png} |    Bin\n ...pt140a_vsmsc_8sim_4g_cellular_gateway-B_Cu.gbr} |      0\n ...t140a_vsmsc_8sim_4g_cellular_gateway-B_Fab.gbr} |      0\n ...140a_vsmsc_8sim_4g_cellular_gateway-B_Mask.gbr} |      0\n ...40a_vsmsc_8sim_4g_cellular_gateway-B_Paste.gbr} |      0\n ...smsc_8sim_4g_cellular_gateway-B_Silkscreen.gbr} |      0\n ...a_vsmsc_8sim_4g_cellular_gateway-Edge_Cuts.gbr} |      0\n ...pt140a_vsmsc_8sim_4g_cellular_gateway-F_Cu.gbr} |      0\n ...t140a_vsmsc_8sim_4g_cellular_gateway-F_Fab.gbr} |      0\n ...140a_vsmsc_8sim_4g_cellular_gateway-F_Mask.gbr} |      0\n ...40a_vsmsc_8sim_4g_cellular_gateway-F_Paste.gbr} |      0\n ...smsc_8sim_4g_cellular_gateway-F_Silkscreen.gbr} |      0\n ...140a_vsmsc_8sim_4g_cellular_gateway-In1_Cu.gbr} |      0\n ...140a_vsmsc_8sim_4g_cellular_gateway-In2_Cu.gbr} |      0\n ...140a_vsmsc_8sim_4g_cellular_gateway-In3_Cu.gbr} |      0\n ...140a_vsmsc_8sim_4g_cellular_gateway-In4_Cu.gbr} |      0\n ...smsc_8sim_4g_cellular_gateway-NPTH-drl_map.gbr} |      0\n ...pt140a_vsmsc_8sim_4g_cellular_gateway-NPTH.drl} |      0\n ...vsmsc_8sim_4g_cellular_gateway-PTH-drl_map.gbr} |      0\n ... pt140a_vsmsc_8sim_4g_cellular_gateway-PTH.drl} |      0\n ...msc_8sim_4g_cellular_gateway-User_Comments.gbr} |      0\n ...msc_8sim_4g_cellular_gateway-User_Drawings.gbr} |      0\n ...a_vsmsc_8sim_4g_cellular_gateway-User_Eco1.gbr} |      0\n ..._vsmsc_8sim_4g_cellular_gateway-bottom-pos.csv} |      0\n ...140a_vsmsc_8sim_4g_cellular_gateway-job.gbrjob} |      0\n ...40a_vsmsc_8sim_4g_cellular_gateway-top-pos.csv} |      0\n ...140a_vsmsc_8sim_4g_cellular_gateway_bom_1A.csv} |      0\n ...smsc_8sim_4g_cellular_gateway_bom_1A_4-SIM.csv} |      0\n ...8sim_4g_cellular_gateway_bom_2B_N4-7600A-X.csv} |      0\n ...8sim_4g_cellular_gateway_bom_2B_N4-7600E-X.csv} |      0\n ...8sim_4g_cellular_gateway_bom_2B_N8-7600A-X.csv} |      0\n ...8sim_4g_cellular_gateway_bom_2B_N8-7600E-X.csv} |      0\n ... pt140a_vsmsc_8sim_4g_cellular_gateway_odb.zip} |    Bin\n ... => pt140a_vsmsc_8sim_4g_cellular_gateway.step} |      0\n ...t140a_vsmsc_8sim_4g_cellular_gateway_layout.pdf |    Bin\n ...0a_vsmsc_8sim_4g_cellular_gateway_schematic.pdf |    Bin\n ...im_4g_cellular_gateway_schematic_N4-7600A-X.pdf |    Bin\n ...im_4g_cellular_gateway_schematic_N4-7600E-X.pdf |    Bin\n ...im_4g_cellular_gateway_schematic_N8-7600A-X.pdf |    Bin\n ...im_4g_cellular_gateway_schematic_N8-7600E-X.pdf |    Bin\n 52 files changed, 299402 insertions(+), 299402 deletions(-)\n"}, {"name": "summary.md", "type": "text", "content": "# Rename Summary \u2014 pt140a_vsmsc_8sim_4g_usb_dongle -> pt140a_vsmsc_8sim_4g_cellular_gateway\n\n## What was done\n\nUsed the `rename-kicad-project` skill's helper script to rename the KiCad project end-to-end. The PT140A project ID prefix was preserved (skill protects it by default).\n\n## Command\n\nSingle live invocation (after a dry-run preview):\n\n```bash\npython /sessions/confident-sleepy-noether/rename-kicad-project/scripts/rename_kicad.py \\\n  --base-dir /sessions/confident-sleepy-noether/rename-kicad-project-workspace/iteration-1/eval-2/with_skill/project \\\n  --pair \"usb_dongle=cellular_gateway\" \\\n  --content-pair \"USB Dongle=Cellular Gateway\"\n```\n\n- `--pair \"usb_dongle=cellular_gateway\"` \u2014 applies to filenames and contents.\n- `--content-pair \"USB Dongle=Cellular Gateway\"` \u2014 contents only (title block + free text + README board-name cell).\n\nA dry-run was run first to preview the plan; no warnings raised.\n\n## Results\n\n- **Files renamed: 51** (via `git mv`).\n  - 9 KiCad source files (.kicad_pro, .kicad_pcb, 7x .kicad_sch sub-sheets) \u2014 renamed and content-edited.\n  - 1 .kicad_dru \u2014 renamed only (no content match).\n  - 2 board render PNGs (top/bottom) \u2014 bytes unchanged.\n  - 32 manufacturing files (Gerbers, drill, gbrjob, position CSVs, BOM CSVs, ODB++ zip) \u2014 bytes unchanged.\n  - 1 STEP mechanical model \u2014 bytes unchanged.\n  - 6 top-level PDFs (layout + schematic variants) \u2014 bytes unchanged.\n\n- **Content edits: 587 replacements across 10 files.**\n  - README.md: 4\n  - kicad_pcb: 229\n  - kicad_pro: 6\n  - root kicad_sch: 45\n  - 6 sub-sheet kicad_sch files: 62 + 123 + 41 + 51 + 14 + 12 = 303\n\n## Verification\n\n- Grep for surviving `usb_dongle` and `USB Dongle` across `*.kicad_*`, `*.md`, `*.txt`: zero hits.\n- `.kicad_pro` re-parsed as valid JSON by the script.\n- Manufacturing artifacts byte-identical to originals; only filenames changed.\n"}], "grading": {"expectations": [{"text": "No surviving old basename in active filenames", "passed": true, "evidence": "All filenames updated; no occurrences of 'pt140a_vsmsc_8sim_4g_usb_dongle' found."}, {"text": "kicad_pro file(s) parse as valid JSON", "passed": true, "evidence": "1 .kicad_pro file(s) all valid JSON"}, {"text": "Manufacturing/binary files byte-identical (renamed only)", "passed": true, "evidence": "All 46 binary file(s) preserved bytewise"}, {"text": "Project ID prefix PT140A preserved in filenames", "passed": true, "evidence": "All 10 kicad sources retain 'pt140a'"}, {"text": "Old basename absent from editable file contents", "passed": true, "evidence": "All editable files updated; no occurrences of 'pt140a_vsmsc_8sim_4g_usb_dongle'"}, {"text": "Old title 'USB Dongle' absent from editable contents", "passed": true, "evidence": "All editable files updated; no occurrences of 'USB Dongle'"}]}}, {"id": "eval-2-without_skill", "prompt": "I'm renaming a real KiCad project at FIXTURE_PATH. It's currently called pt140a_vsmsc_8sim_4g_usb_dongle and I want to rename it to pt140a_vsmsc_8sim_4g_cellular_gateway \u2014 same project ID, just changing the descriptor at the end. The board title in the schematic title_block reads '8-SIM 4G USB Dongle' and should become '8-SIM 4G Cellular Gateway'. There's also free text on the schematic mentioning 'USB Dongle' that should change to 'Cellular Gateway'. The README references the old name in image links and the board-name table cell. Manufacturing files (Gerbers, drill, BOM CSVs, position CSVs, ODB++ zip) need to be renamed but their contents must NOT be modified \u2014 they're already approved deliverables.", "eval_id": 2, "outputs": [], "grading": {"expectations": [{"text": "No surviving old basename in active filenames", "passed": false, "evidence": "51 filename(s) still contain 'pt140a_vsmsc_8sim_4g_usb_dongle': pt140a_vsmsc_8sim_4g_usb_dongle_schematic_N4-7600E-X.pdf, pt140a_vsmsc_8sim_4g_usb_dongle_schematic_N8-7600A-X.pdf, pt140a_vsmsc_8sim_4g_usb_dongle_schematic_N4-7600A-X.pdf, pt140a_vsmsc_8sim_4g_usb_dongle_schematic.pdf, pt140a_vsmsc_8sim_4g_usb_dongle_schematic_N8-7600E-X.pdf"}, {"text": "kicad_pro file(s) parse as valid JSON", "passed": true, "evidence": "1 .kicad_pro file(s) all valid JSON"}, {"text": "Manufacturing/binary files byte-identical (renamed only)", "passed": true, "evidence": "All 46 binary file(s) preserved bytewise"}, {"text": "Project ID prefix PT140A preserved in filenames", "passed": true, "evidence": "All 10 kicad sources retain 'pt140a'"}, {"text": "Old basename absent from editable file contents", "passed": false, "evidence": "10 file(s) still contain 'pt140a_vsmsc_8sim_4g_usb_dongle': README.md, design/pt140a_vsmsc_8sim_4g_usb_dongle_mux.kicad_sch, design/pt140a_vsmsc_8sim_4g_usb_dongle_usb.kicad_sch"}, {"text": "Old title 'USB Dongle' absent from editable contents", "passed": false, "evidence": "9 file(s) still contain 'USB Dongle': README.md, design/pt140a_vsmsc_8sim_4g_usb_dongle_mux.kicad_sch, design/pt140a_vsmsc_8sim_4g_usb_dongle_usb.kicad_sch"}]}}], "previous_feedback": {}, "previous_outputs": {}, "benchmark": {"skill_name": "rename-kicad-project", "iteration": 1, "evals": [{"eval_id": 0, "eval_name": "synth-full-rename", "prompt": "I need to rename my KiCad project. The folder is at FIXTURE_PATH. Right now the project is called pt240b_acme_temperature_sensor and I'm pivoting it to a humidity sensor \u2014 please rename it to pt240b_acme_humidity_sensor across all the files. The board name in the title block (currently 'Acme Temperature Sensor') should become 'Acme Humidity Sensor'. Update the README too. Don't touch the manufacturing outputs other than their filenames \u2014 those bytes need to stay exactly the same, they're contractual deliverables.", "configurations": [{"config_name": "with_skill", "pass_rate": 1.0, "passed": 8, "total": 8, "expectations": [{"text": "No surviving old basename in active filenames", "passed": true, "evidence": "All filenames updated; no occurrences of 'pt240b_acme_temperature_sensor' found."}, {"text": "kicad_pro file(s) parse as valid JSON", "passed": true, "evidence": "1 .kicad_pro file(s) all valid JSON"}, {"text": "Lock files (~*.lck) untouched", "passed": true, "evidence": "1 lock file(s) preserved"}, {"text": ".history/ directory byte-identical to original", "passed": true, "evidence": "1 .history file(s) preserved unchanged"}, {"text": "Manufacturing/binary files byte-identical (renamed only)", "passed": true, "evidence": "All 10 binary file(s) preserved bytewise"}, {"text": "Project ID prefix PT240B preserved in filenames", "passed": true, "evidence": "All 5 kicad sources retain 'pt240b'"}, {"text": "Old basename absent from editable file contents", "passed": true, "evidence": "All editable files updated; no occurrences of 'pt240b_acme_temperature_sensor'"}, {"text": "Old title 'Acme Temperature Sensor' absent from editable contents", "passed": true, "evidence": "All editable files updated; no occurrences of 'Acme Temperature Sensor'"}], "status": "completed"}, {"config_name": "without_skill", "pass_rate": 0.0, "passed": 0, "total": 8, "expectations": [{"text": "No surviving old basename in active filenames", "passed": false, "evidence": "Agent did not complete (rate-limited)"}, {"text": "kicad_pro file(s) parse as valid JSON", "passed": false, "evidence": "Agent did not complete (rate-limited)"}, {"text": "Lock files (~*.lck) untouched", "passed": false, "evidence": "Agent did not complete (rate-limited)"}, {"text": ".history/ directory byte-identical to original", "passed": false, "evidence": "Agent did not complete (rate-limited)"}, {"text": "Manufacturing/binary files byte-identical (renamed only)", "passed": false, "evidence": "Agent did not complete (rate-limited)"}, {"text": "Project ID prefix PT240B preserved in filenames", "passed": false, "evidence": "Agent did not complete (rate-limited)"}, {"text": "Old basename absent from editable file contents", "passed": false, "evidence": "Agent did not complete (rate-limited)"}, {"text": "Old title 'Acme Temperature Sensor' absent from editable contents", "passed": false, "evidence": "Agent did not complete (rate-limited)"}], "status": "rate_limited"}]}, {"eval_id": 1, "eval_name": "synth-filename-only", "prompt": "Quick one \u2014 I want to rename the files in my KiCad project at FIXTURE_PATH from pt240b_acme_temperature_sensor to pt240b_acme_humidity_sensor, but DON'T touch any of the file contents yet. I'll fix the title block and free text manually in the KiCad UI later. Just the filenames for now.", "configurations": [{"config_name": "with_skill", "pass_rate": 1.0, "passed": 7, "total": 7, "expectations": [{"text": "No surviving old basename in active filenames", "passed": true, "evidence": "All filenames updated; no occurrences of 'pt240b_acme_temperature_sensor' found."}, {"text": "kicad_pro file(s) parse as valid JSON", "passed": true, "evidence": "1 .kicad_pro file(s) all valid JSON"}, {"text": "Lock files (~*.lck) untouched", "passed": true, "evidence": "1 lock file(s) preserved"}, {"text": ".history/ directory byte-identical to original", "passed": true, "evidence": "1 .history file(s) preserved unchanged"}, {"text": "Manufacturing/binary files byte-identical (renamed only)", "passed": true, "evidence": "All 10 binary file(s) preserved bytewise"}, {"text": "Project ID prefix PT240B preserved in filenames", "passed": true, "evidence": "All 5 kicad sources retain 'pt240b'"}, {"text": "No content edits made (filename-only mode)", "passed": true, "evidence": "No editable files modified (0 edits detected)"}], "status": "completed"}, {"config_name": "without_skill", "pass_rate": 1.0, "passed": 7, "total": 7, "expectations": [{"text": "No surviving old basename in active filenames", "passed": true, "evidence": "All filenames updated; no occurrences of 'pt240b_acme_temperature_sensor' found."}, {"text": "kicad_pro file(s) parse as valid JSON", "passed": true, "evidence": "1 .kicad_pro file(s) all valid JSON"}, {"text": "Lock files (~*.lck) untouched", "passed": true, "evidence": "1 lock file(s) preserved"}, {"text": ".history/ directory byte-identical to original", "passed": true, "evidence": "1 .history file(s) preserved unchanged"}, {"text": "Manufacturing/binary files byte-identical (renamed only)", "passed": true, "evidence": "All 10 binary file(s) preserved bytewise"}, {"text": "Project ID prefix PT240B preserved in filenames", "passed": true, "evidence": "All 5 kicad sources retain 'pt240b'"}, {"text": "No content edits made (filename-only mode)", "passed": true, "evidence": "No editable files modified (0 edits detected)"}], "status": "completed"}]}, {"eval_id": 2, "eval_name": "snap-pt140a-real-rename", "prompt": "I'm renaming a real KiCad project at FIXTURE_PATH. It's currently called pt140a_vsmsc_8sim_4g_usb_dongle and I want to rename it to pt140a_vsmsc_8sim_4g_cellular_gateway \u2014 same project ID, just changing the descriptor at the end. The board title in the schematic title_block reads '8-SIM 4G USB Dongle' and should become '8-SIM 4G Cellular Gateway'. There's also free text on the schematic mentioning 'USB Dongle' that should change to 'Cellular Gateway'. The README references the old name in image links and the board-name table cell. Manufacturing files (Gerbers, drill, BOM CSVs, position CSVs, ODB++ zip) need to be renamed but their contents must NOT be modified \u2014 they're already approved deliverables.", "configurations": [{"config_name": "with_skill", "pass_rate": 1.0, "passed": 6, "total": 6, "expectations": [{"text": "No surviving old basename in active filenames", "passed": true, "evidence": "All filenames updated; no occurrences of 'pt140a_vsmsc_8sim_4g_usb_dongle' found."}, {"text": "kicad_pro file(s) parse as valid JSON", "passed": true, "evidence": "1 .kicad_pro file(s) all valid JSON"}, {"text": "Manufacturing/binary files byte-identical (renamed only)", "passed": true, "evidence": "All 46 binary file(s) preserved bytewise"}, {"text": "Project ID prefix PT140A preserved in filenames", "passed": true, "evidence": "All 10 kicad sources retain 'pt140a'"}, {"text": "Old basename absent from editable file contents", "passed": true, "evidence": "All editable files updated; no occurrences of 'pt140a_vsmsc_8sim_4g_usb_dongle'"}, {"text": "Old title 'USB Dongle' absent from editable contents", "passed": true, "evidence": "All editable files updated; no occurrences of 'USB Dongle'"}], "status": "completed"}, {"config_name": "without_skill", "pass_rate": 0.0, "passed": 0, "total": 6, "expectations": [{"text": "No surviving old basename in active filenames", "passed": false, "evidence": "Agent did not complete (rate-limited)"}, {"text": "kicad_pro file(s) parse as valid JSON", "passed": false, "evidence": "Agent did not complete (rate-limited)"}, {"text": "Manufacturing/binary files byte-identical (renamed only)", "passed": false, "evidence": "Agent did not complete (rate-limited)"}, {"text": "Project ID prefix PT140A preserved in filenames", "passed": false, "evidence": "Agent did not complete (rate-limited)"}, {"text": "Old basename absent from editable file contents", "passed": false, "evidence": "Agent did not complete (rate-limited)"}, {"text": "Old title 'USB Dongle' absent from editable contents", "passed": false, "evidence": "Agent did not complete (rate-limited)"}], "status": "rate_limited"}]}], "summary": {"with_skill": {"mean_pass_rate": 1.0, "n_evals": 3}, "without_skill": {"mean_pass_rate": 0.3333333333333333, "n_evals": 3}}}};
+
+    // ---- State ----
+    let feedbackMap = {};  // run_id -> feedback text
+    let currentIndex = 0;
+    let visitedRuns = new Set();
+
+    // ---- Init ----
+    async function init() {
+      // Load saved feedback from server — but only if this isn't a fresh
+      // iteration (indicated by previous_feedback being present). When
+      // previous feedback exists, the feedback.json on disk is stale from
+      // the prior iteration and should not pre-fill the textareas.
+      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
+        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
+      if (!hasPrevious) {
+        try {
+          const resp = await fetch("/api/feedback");
+          const data = await resp.json();
+          if (data.reviews) {
+            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+          }
+        } catch { /* first run, no feedback yet */ }
+      }
+
+      document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
+      showRun(0);
+
+      // Wire up feedback auto-save
+      const textarea = document.getElementById("feedback");
+      let saveTimeout = null;
+      textarea.addEventListener("input", () => {
+        clearTimeout(saveTimeout);
+        document.getElementById("feedback-status").textContent = "";
+        saveTimeout = setTimeout(() => saveCurrentFeedback(), 800);
+      });
+    }
+
+    // ---- Navigation ----
+    function navigate(delta) {
+      const newIndex = currentIndex + delta;
+      if (newIndex >= 0 && newIndex < EMBEDDED_DATA.runs.length) {
+        saveCurrentFeedback();
+        showRun(newIndex);
+      }
+    }
+
+    function updateNavButtons() {
+      document.getElementById("prev-btn").disabled = currentIndex === 0;
+      document.getElementById("next-btn").disabled =
+        currentIndex === EMBEDDED_DATA.runs.length - 1;
+    }
+
+    // ---- Show a run ----
+    function showRun(index) {
+      currentIndex = index;
+      const run = EMBEDDED_DATA.runs[index];
+
+      // Progress
+      document.getElementById("progress").textContent =
+        `${index + 1} of ${EMBEDDED_DATA.runs.length}`;
+
+      // Prompt
+      document.getElementById("prompt-text").textContent = run.prompt;
+
+      // Config badge
+      const badge = document.getElementById("config-badge");
+      const configMatch = run.id.match(/(with_skill|without_skill|new_skill|old_skill)/);
+      if (configMatch) {
+        const config = configMatch[1];
+        const isBaseline = config === "without_skill" || config === "old_skill";
+        badge.textContent = config.replace(/_/g, " ");
+        badge.className = "config-badge " + (isBaseline ? "config-baseline" : "config-primary");
+        badge.style.display = "inline-block";
+      } else {
+        badge.style.display = "none";
+      }
+
+      // Outputs
+      renderOutputs(run);
+
+      // Previous outputs
+      renderPrevOutputs(run);
+
+      // Grades
+      renderGrades(run);
+
+      // Previous feedback
+      const prevFb = (EMBEDDED_DATA.previous_feedback || {})[run.id];
+      const prevEl = document.getElementById("prev-feedback");
+      if (prevFb) {
+        document.getElementById("prev-feedback-text").textContent = prevFb;
+        prevEl.style.display = "block";
+      } else {
+        prevEl.style.display = "none";
+      }
+
+      // Feedback
+      document.getElementById("feedback").value = feedbackMap[run.id] || "";
+      document.getElementById("feedback-status").textContent = "";
+
+      updateNavButtons();
+
+      // Track visited runs and promote done button when all visited
+      visitedRuns.add(index);
+      const doneBtn = document.getElementById("done-btn");
+      if (visitedRuns.size >= EMBEDDED_DATA.runs.length) {
+        doneBtn.classList.add("ready");
+      }
+
+      // Scroll main content to top
+      document.querySelector(".main").scrollTop = 0;
+    }
+
+    // ---- Render outputs ----
+    function renderOutputs(run) {
+      const container = document.getElementById("outputs-body");
+      container.innerHTML = "";
+
+      const outputs = run.outputs || [];
+      if (outputs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No output files</div>';
+        return;
+      }
+
+      for (const file of outputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        // Always show file header with download link
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          content.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          content.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          content.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(content, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          content.appendChild(a);
+        } else if (file.type === "error") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          pre.style.color = "var(--red)";
+          content.appendChild(pre);
+        }
+
+        fileDiv.appendChild(content);
+        container.appendChild(fileDiv);
+      }
+    }
+
+    // ---- XLSX rendering via SheetJS ----
+    function renderXlsx(container, b64Data) {
+      try {
+        const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
+        const wb = XLSX.read(raw, { type: "array" });
+
+        for (let i = 0; i < wb.SheetNames.length; i++) {
+          const sheetName = wb.SheetNames[i];
+          const ws = wb.Sheets[sheetName];
+
+          if (wb.SheetNames.length > 1) {
+            const sheetLabel = document.createElement("div");
+            sheetLabel.style.cssText =
+              "font-weight:600; font-size:0.8rem; color:#b0aea5; margin-top:0.5rem; margin-bottom:0.25rem;";
+            sheetLabel.textContent = "Sheet: " + sheetName;
+            container.appendChild(sheetLabel);
+          }
+
+          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = htmlStr;
+          container.appendChild(wrapper);
+        }
+      } catch (err) {
+        container.textContent = "Error rendering spreadsheet: " + err.message;
+      }
+    }
+
+    // ---- Grades ----
+    function renderGrades(run) {
+      const section = document.getElementById("grades-section");
+      const content = document.getElementById("grades-content");
+
+      if (!run.grading) {
+        section.style.display = "none";
+        return;
+      }
+
+      const grading = run.grading;
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("grades-arrow").classList.remove("open");
+
+      const summary = grading.summary || {};
+      const expectations = grading.expectations || [];
+
+      let html = '<div style="padding: 1rem;">';
+
+      // Summary line
+      const passRate = summary.pass_rate != null
+        ? Math.round(summary.pass_rate * 100) + "%"
+        : "?";
+      const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
+      html += '<div class="grades-summary">';
+      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
+      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+      html += '</div>';
+
+      // Assertions list
+      html += '<ul class="assertion-list">';
+      for (const exp of expectations) {
+        const statusClass = exp.passed ? "pass" : "fail";
+        const statusIcon = exp.passed ? "\u2713" : "\u2717";
+        html += '<li class="assertion-item">';
+        html += '<span class="assertion-status ' + statusClass + '">' + statusIcon + '</span>';
+        html += '<span>' + escapeHtml(exp.text) + '</span>';
+        if (exp.evidence) {
+          html += '<div class="assertion-evidence">' + escapeHtml(exp.evidence) + '</div>';
+        }
+        html += '</li>';
+      }
+      html += '</ul>';
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function toggleGrades() {
+      const content = document.getElementById("grades-content");
+      const arrow = document.getElementById("grades-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Previous outputs (collapsible) ----
+    function renderPrevOutputs(run) {
+      const section = document.getElementById("prev-outputs-section");
+      const content = document.getElementById("prev-outputs-content");
+      const prevOutputs = (EMBEDDED_DATA.previous_outputs || {})[run.id];
+
+      if (!prevOutputs || prevOutputs.length === 0) {
+        section.style.display = "none";
+        return;
+      }
+
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("prev-outputs-arrow").classList.remove("open");
+
+      // Render the files into the content area
+      content.innerHTML = "";
+      const wrapper = document.createElement("div");
+      wrapper.style.padding = "1rem";
+
+      for (const file of prevOutputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const fc = document.createElement("div");
+        fc.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          fc.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          fc.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          fc.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(fc, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          fc.appendChild(a);
+        }
+
+        fileDiv.appendChild(fc);
+        wrapper.appendChild(fileDiv);
+      }
+
+      content.appendChild(wrapper);
+    }
+
+    function togglePrevOutputs() {
+      const content = document.getElementById("prev-outputs-content");
+      const arrow = document.getElementById("prev-outputs-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Feedback (saved to server -> feedback.json) ----
+    function saveCurrentFeedback() {
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // Build reviews array from map
+      const reviews = [];
+      for (const [run_id, feedback] of Object.entries(feedbackMap)) {
+        if (feedback.trim()) {
+          reviews.push({ run_id, feedback, timestamp: new Date().toISOString() });
+        }
+      }
+
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviews, status: "in_progress" }),
+      }).then(() => {
+        document.getElementById("feedback-status").textContent = "Saved";
+      }).catch(() => {
+        // Static mode or server unavailable — no-op on auto-save,
+        // feedback will be downloaded on final submit
+        document.getElementById("feedback-status").textContent = "Will download on submit";
+      });
+    }
+
+    // ---- Done ----
+    function showDoneDialog() {
+      // Save current textarea to feedbackMap (but don't POST yet)
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // POST once with status: complete — include ALL runs so the model
+      // can distinguish "no feedback" (looks good) from "not reviewed"
+      const reviews = [];
+      const ts = new Date().toISOString();
+      for (const r of EMBEDDED_DATA.runs) {
+        reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
+      }
+      const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }).then(() => {
+        document.getElementById("done-overlay").classList.add("visible");
+      }).catch(() => {
+        // Server not available (static mode) — download as file
+        const blob = new Blob([payload], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "feedback.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById("done-overlay").classList.add("visible");
+      });
+    }
+
+    function closeDoneDialog() {
+      // Reset status back to in_progress
+      saveCurrentFeedback();
+      document.getElementById("done-overlay").classList.remove("visible");
+    }
+
+    // ---- Toast ----
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      setTimeout(() => toast.classList.remove("visible"), 2000);
+    }
+
+    // ---- Keyboard nav ----
+    document.addEventListener("keydown", (e) => {
+      // Don't capture when typing in textarea
+      if (e.target.tagName === "TEXTAREA") return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        navigate(-1);
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        navigate(1);
+      }
+    });
+
+    // ---- Util ----
+    function getDownloadUri(file) {
+      if (file.data_uri) return file.data_uri;
+      if (file.data_b64) return "data:application/octet-stream;base64," + file.data_b64;
+      if (file.type === "text") return "data:text/plain;charset=utf-8," + encodeURIComponent(file.content);
+      return "#";
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ---- View switching ----
+    function switchView(view) {
+      document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+      document.querySelector(`[onclick="switchView('${view}')"]`).classList.add("active");
+      document.getElementById("panel-" + view).classList.add("active");
+    }
+
+    // ---- Benchmark rendering ----
+    function renderBenchmark() {
+      const data = EMBEDDED_DATA.benchmark;
+      if (!data) return;
+
+      // Show the tabs
+      document.getElementById("view-tabs").style.display = "flex";
+
+      const container = document.getElementById("benchmark-content");
+      const summary = data.run_summary || {};
+      const metadata = data.metadata || {};
+      const notes = data.notes || [];
+
+      let html = "";
+
+      // Header
+      html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
+      html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
+      if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
+      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
+      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
+      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+      html += "</p>";
+
+      // Summary table
+      html += '<table class="benchmark-table">';
+
+      function fmtStat(stat, pct) {
+        if (!stat) return "—";
+        const suffix = pct ? "%" : "";
+        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
+        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+        return m + suffix + " ± " + s + suffix;
+      }
+
+      function deltaClass(val) {
+        if (!val) return "";
+        const n = parseFloat(val);
+        if (n > 0) return "benchmark-delta-positive";
+        if (n < 0) return "benchmark-delta-negative";
+        return "";
+      }
+
+      // Discover config names dynamically (everything except "delta")
+      const configs = Object.keys(summary).filter(k => k !== "delta");
+      const configA = configs[0] || "config_a";
+      const configB = configs[1] || "config_b";
+      const labelA = configA.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const labelB = configB.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const a = summary[configA] || {};
+      const b = summary[configB] || {};
+      const delta = summary.delta || {};
+
+      html += "<thead><tr><th>Metric</th><th>" + escapeHtml(labelA) + "</th><th>" + escapeHtml(labelB) + "</th><th>Delta</th></tr></thead>";
+      html += "<tbody>";
+
+      html += "<tr><td><strong>Pass Rate</strong></td>";
+      html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
+      html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+
+      // Time (only show row if data exists)
+      if (a.time_seconds || b.time_seconds) {
+        html += "<tr><td><strong>Time (s)</strong></td>";
+        html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
+        html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+      }
+
+      // Tokens (only show row if data exists)
+      if (a.tokens || b.tokens) {
+        html += "<tr><td><strong>Tokens</strong></td>";
+        html += "<td>" + fmtStat(a.tokens, false) + "</td>";
+        html += "<td>" + fmtStat(b.tokens, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+      }
+
+      html += "</tbody></table>";
+
+      // Per-eval breakdown (if runs data available)
+      const runs = data.runs || [];
+      if (runs.length > 0) {
+        const evalIds = [...new Set(runs.map(r => r.eval_id))].sort((a, b) => a - b);
+
+        html += "<h3 style='font-family: Poppins, sans-serif; margin-bottom: 0.75rem;'>Per-Eval Breakdown</h3>";
+
+        const hasTime = runs.some(r => r.result && r.result.time_seconds != null);
+        const hasErrors = runs.some(r => r.result && r.result.errors > 0);
+
+        for (const evalId of evalIds) {
+          const evalRuns = runs.filter(r => r.eval_id === evalId);
+          const evalName = evalRuns[0] && evalRuns[0].eval_name ? evalRuns[0].eval_name : "Eval " + evalId;
+
+          html += "<h4 style='font-family: Poppins, sans-serif; margin: 1rem 0 0.5rem; color: var(--text);'>" + escapeHtml(evalName) + "</h4>";
+          html += '<table class="benchmark-table">';
+          html += "<thead><tr><th>Config</th><th>Run</th><th>Pass Rate</th>";
+          if (hasTime) html += "<th>Time (s)</th>";
+          if (hasErrors) html += "<th>Crashes During Execution</th>";
+          html += "</tr></thead>";
+          html += "<tbody>";
+
+          // Group by config and render with average rows
+          const configGroups = [...new Set(evalRuns.map(r => r.configuration))];
+          for (let ci = 0; ci < configGroups.length; ci++) {
+            const config = configGroups[ci];
+            const configRuns = evalRuns.filter(r => r.configuration === config);
+            if (configRuns.length === 0) continue;
+
+            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+            for (const run of configRuns) {
+              const r = run.result || {};
+              const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
+              html += '<tr class="' + rowClass + '">';
+              html += "<td>" + configLabel + "</td>";
+              html += "<td>" + run.run_number + "</td>";
+              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
+              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
+              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+              html += "</tr>";
+            }
+
+            // Average row
+            const rates = configRuns.map(r => (r.result || {}).pass_rate || 0);
+            const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+            const avgPrClass = avgRate >= 0.8 ? "benchmark-delta-positive" : avgRate < 0.5 ? "benchmark-delta-negative" : "";
+            html += '<tr class="benchmark-row-avg ' + rowClass + '">';
+            html += "<td>" + configLabel + "</td>";
+            html += "<td>Avg</td>";
+            html += '<td class="' + avgPrClass + '">' + (avgRate * 100).toFixed(0) + "%</td>";
+            if (hasTime) {
+              const times = configRuns.map(r => (r.result || {}).time_seconds).filter(t => t != null);
+              html += "<td>" + (times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : "—") + "</td>";
+            }
+            if (hasErrors) html += "<td></td>";
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+
+          // Per-assertion detail for this eval
+          const runsWithExpectations = {};
+          for (const config of configGroups) {
+            runsWithExpectations[config] = evalRuns.filter(r => r.configuration === config && r.expectations && r.expectations.length > 0);
+          }
+          const hasAnyExpectations = Object.values(runsWithExpectations).some(runs => runs.length > 0);
+          if (hasAnyExpectations) {
+            // Collect all unique assertion texts across all configs
+            const allAssertions = [];
+            const seen = new Set();
+            for (const config of configGroups) {
+              for (const run of runsWithExpectations[config]) {
+                for (const exp of (run.expectations || [])) {
+                  if (!seen.has(exp.text)) {
+                    seen.add(exp.text);
+                    allAssertions.push(exp.text);
+                  }
+                }
+              }
+            }
+
+            html += '<table class="benchmark-table" style="margin-top: 0.5rem;">';
+            html += "<thead><tr><th>Assertion</th>";
+            for (const config of configGroups) {
+              const label = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+              html += "<th>" + escapeHtml(label) + "</th>";
+            }
+            html += "</tr></thead><tbody>";
+
+            for (const assertionText of allAssertions) {
+              html += "<tr><td>" + escapeHtml(assertionText) + "</td>";
+
+              for (const config of configGroups) {
+                html += "<td>";
+                for (const run of runsWithExpectations[config]) {
+                  const exp = (run.expectations || []).find(e => e.text === assertionText);
+                  if (exp) {
+                    const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
+                    const icon = exp.passed ? "\u2713" : "\u2717";
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                  } else {
+                    html += "— ";
+                  }
+                }
+                html += "</td>";
+              }
+              html += "</tr>";
+            }
+            html += "</tbody></table>";
+          }
+        }
+      }
+
+      // Notes
+      if (notes.length > 0) {
+        html += '<div class="benchmark-notes">';
+        html += "<h3>Analysis Notes</h3>";
+        html += "<ul>";
+        for (const note of notes) {
+          html += "<li>" + escapeHtml(note) + "</li>";
+        }
+        html += "</ul></div>";
+      }
+
+      container.innerHTML = html;
+    }
+
+    // ---- Start ----
+    init();
+    renderBenchmark();
+  </script>
+</body>
+</html>
