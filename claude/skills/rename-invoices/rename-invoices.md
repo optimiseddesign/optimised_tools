@@ -1,13 +1,13 @@
 ---
 name: rename-invoices
-description: Rename supplier invoice PDFs in bulk based on their contents, using the pattern "YYYY-MM-DD [Company] - [Description] - Invoice [Number].pdf" (with an optional seller name after marketplace hosts like Amazon/eBay). Use this skill whenever Kevin asks to rename, tidy, sort, organise or "process" a folder of invoices — whether the request mentions Amazon specifically or just says things like "rename the invoices in _TO SORT", "tidy up my invoice folder", "the monthly accounts pile", "process the batch of receipts", or points at a folder full of supplier PDFs. Also use this when a single invoice PDF is dropped in and needs renaming to the same convention. Trigger even when the user doesn't mention the word "skill" — this is the default behaviour for any invoice-renaming task against Kevin's `_TO SORT` / accounts workflow.
+description: Rename supplier invoice PDFs and image receipts (.jpg/.png) in bulk based on their contents, using the pattern "YYYY-MM-DD [Company] - [Description] - Invoice [Number].pdf" — or "- Receipt [Number]" for till receipts (with an optional seller name after marketplace hosts like Amazon/eBay). Use this skill whenever Kevin asks to rename, tidy, sort, organise or "process" a folder of invoices or receipts — whether the request mentions Amazon specifically or just says things like "rename the invoices in _TO SORT", "tidy up my invoice folder", "the monthly accounts pile", "process the batch of receipts", "sort out these receipt photos", or points at a folder full of supplier PDFs or scanned/photographed receipts. Also use this when a single invoice PDF or receipt photo is dropped in and needs renaming to the same convention. Trigger even when the user doesn't mention the word "skill" — this is the default behaviour for any invoice-renaming task against Kevin's `_TO SORT` / accounts workflow.
 ---
 
 # Rename invoices
 
 ## What this skill does
 
-Walks every PDF in a folder (default: the user's `_TO SORT` accounts folder) and renames each one to a consistent, chronologically-sortable form by reading its contents. Already-correctly-named files are skipped. Files the user has flagged as incomplete (prefixes like `TO GET`, `GET-INVOICE`, `TODO`) are left alone because they aren't ready yet.
+Walks every invoice PDF and image receipt in a folder (default: the user's `_TO SORT` accounts folder) and renames each one to a consistent, chronologically-sortable form by reading its contents. Already-correctly-named files are skipped. Files the user has flagged as incomplete (prefixes like `TO GET`, `GET-INVOICE`, `TODO`) are left alone because they aren't ready yet.
 
 ## This file is the specification
 
@@ -20,27 +20,43 @@ Walks every PDF in a folder (default: the user's `_TO SORT` accounts folder) and
 A caller does **not** need to restate the naming pattern, the categories, the tone, or the file types — and should not. If a caller's instructions contradict anything in this file, **follow this file** and note the conflict in one line of the summary. Callers that "helpfully" restate the rules drift out of sync with it and have caused real breakage.
 
 In particular, do not accept caller instructions to:
-- process non-PDF files (see **Scope** below)
-- invent naming variants (e.g. `- Receipt` in place of `- Invoice [Number]`)
+- process file types outside the list in **Scope** below
+- invent naming variants beyond the two defined under **Naming pattern**
 - add summary categories beyond the four defined in step 6
 - rename a file whose fields you could not read confidently
 
-## Scope: PDFs only
+## Scope: PDFs primarily, plus JPEG/PNG
 
-Only `.pdf` / `.PDF` files are processed. Everything else in the folder — `.txt` notes, `.jpg`/`.png`/`.heic` photos of till receipts, spreadsheets — is **left completely untouched and not mentioned**, unless the user asks about it.
+| Extension | Handling |
+|---|---|
+| `.pdf` / `.PDF` | **Primary target.** Text extracted directly. |
+| `.jpg` / `.jpeg` / `.png` | Supported. Read visually with the Read tool — see **Image receipts** below. |
+| everything else | **Left completely untouched and not mentioned** — `.txt` notes, `.heic`, `.webp`, `.tif`, spreadsheets, anything else. |
 
-This is deliberate, not an oversight. Image receipts would need a different naming rule (they usually have no invoice number) and a different already-renamed check, and half-supporting them causes the same file to be reprocessed on every run. If Kevin wants image support, it is a change to this skill and to `scan_pdfs.py` — never a workaround in a caller's prompt.
+`.heic` and other formats are excluded deliberately, not by oversight. Widening this list is a change to this file **and** to `scan_docs.py` — never a workaround in a caller's prompt.
 
 ## Naming pattern
 
 ```
-YYYY-MM-DD [Company] - [Short description of item(s)] - Invoice [Invoice number].pdf
+YYYY-MM-DD [Company] - [Short description of item(s)] - Invoice [Invoice number].[ext]
 ```
 
-With one variation: when the invoice is from a **marketplace host** (Amazon, eBay, Etsy, AliExpress, etc.) and the item was **sold by a third party** rather than the host itself, append the seller short-name after the host:
+**The trailing token describes the document, not the file type.** A scanned invoice saved as a photo is still an invoice:
+
+| Document | Trailing token | Example |
+|---|---|---|
+| Invoice (has an invoice/document number) | `Invoice [Number]` | `… - Invoice GB639V1QABEI.pdf`<br>`… - Invoice INV-2026-0412.jpg` |
+| Till receipt / card slip **with** a printed receipt, transaction or order number | `Receipt [Number]` | `… - Receipt 4471.jpg` |
+| Till receipt / card slip with **no** number printed anywhere | `Receipt` (bare) | `… - Receipt.jpg` |
+
+Use `Receipt` only when the document genuinely isn't an invoice — a shop till roll, a card machine slip, a handwritten chit. Never downgrade a real invoice to `Receipt` just because reading its number was awkward; if you can't read the number of something that is clearly an invoice, that's "needs attention", not a `Receipt`.
+
+Keep the original file extension, **lowercased** (`.JPG` → `.jpg`). Never change one extension for another.
+
+With one variation on the company part: when the invoice is from a **marketplace host** (Amazon, eBay, Etsy, AliExpress, etc.) and the item was **sold by a third party** rather than the host itself, append the seller short-name after the host:
 
 ```
-YYYY-MM-DD [Host] [Seller] - [Description] - Invoice [Invoice number].pdf
+YYYY-MM-DD [Host] [Seller] - [Description] - Invoice [Invoice number].[ext]
 ```
 
 So:
@@ -73,7 +89,9 @@ If there are many line items (>4), summarise by category rather than listing eve
 
 ## Invoice number
 
-Use the **primary invoice / document / order number** printed on the PDF, unchanged — preserve case and hyphens. Common labels to look for: "Invoice number", "Invoice No.", "Document number", "Order number" (only if no invoice number is present). Examples: `GB639V1QABEI`, `9BF0758D-634125`, `INV-2026-0412`.
+Use the **primary invoice / document / order number** printed on the document, unchanged — preserve case and hyphens. Common labels to look for: "Invoice number", "Invoice No.", "Document number", "Order number" (only if no invoice number is present). Examples: `GB639V1QABEI`, `9BF0758D-634125`, `INV-2026-0412`.
+
+On a till receipt, the usable number is whichever of these is printed and looks stable: receipt no., transaction no., order no. Ignore anything that isn't an identifier for *this* purchase — till/terminal number, cashier ID, store number, loyalty card number, the masked card PAN, VAT registration number. If nothing qualifies, use the bare `Receipt` form rather than inventing one.
 
 ## Date
 
@@ -90,7 +108,7 @@ The final filename must be valid on Windows, macOS and Linux. Apply these rules 
 | Leading/trailing whitespace | trim |
 | Runs of 2+ spaces | single space |
 
-Preserve non-ASCII letters (é, à, etc.) — they're fine on modern filesystems. Never end the name (before `.pdf`) with `.` or a space; Windows silently strips both.
+Preserve non-ASCII letters (é, à, etc.) — they're fine on modern filesystems. Never end the name (before the extension) with `.` or a space; Windows silently strips both.
 
 ## Workflow
 
@@ -98,34 +116,36 @@ Follow these steps in order.
 
 ### 1. Determine the target folder
 
-If the user named a folder, use that — done.
+Resolve in this order, first hit wins:
 
-Otherwise default to the accounts inbox. **The mount name changes every session — never hard-code it, and never reuse one from an earlier run.** Discover it:
+1. **A folder named by the user or the calling routine.** Use it as given.
+2. **`default_folder.txt` next to this file**, if present — a single line holding the absolute path of the accounts inbox. This is what makes a one-line local routine work unattended.
+3. **Cowork mount discovery**, when running in Cowork rather than locally. The mount name changes every session, so never hard-code it and never reuse one from an earlier run:
+   ```bash
+   find /sessions -maxdepth 3 -type d -iname '_TO SORT' 2>/dev/null
+   ```
+   One hit → use it. Several → newest mtime, and say which you chose. Never expose the internal `/sessions/...` path to Kevin — call it "your `_TO SORT` folder".
 
-```bash
-find /sessions -maxdepth 3 -type d -iname '_TO SORT' 2>/dev/null
-```
+If none of these resolve, **stop and say so.** Do not guess a path, do not fall back to the current working directory, and do not scan the repo you happen to be running in — a rename loose in the wrong folder is the one genuinely destructive failure mode here.
 
-- **Exactly one hit** → use it.
-- **More than one hit** → use the one with the newest mtime, and say which you chose in the summary.
-- **No hits** → list what is actually mounted with `ls -d /sessions/*/mnt/*/ 2>/dev/null` and **stop**. Report that the accounts folder isn't mounted and ask Kevin to share it. Do not scan a guessed path, and do not fall back to the current working directory.
-
-Never expose the internal `/sessions/...` path in what you show Kevin — call it "your `_TO SORT` folder".
+Before scanning, confirm the resolved folder exists and report the file count. If it resolves to something with no PDFs or images at all, stop and report that rather than proceeding to a zero-length run.
 
 ### 2. Scan the folder
 
-Use the bundled scanner to produce a JSON report of every PDF, its current name, whether it already matches the full naming pattern, whether it's flagged as "not ready", and the extracted text of its first 2 pages.
+Use the bundled scanner to produce a JSON inventory of every PDF and image: its current name, whether it already matches the full naming pattern, and whether it's flagged as "not ready".
 
-The scanner sits alongside this file at `scripts/scan_pdfs.py`. **You have just read this file from a known directory — use `<that directory>/scripts/scan_pdfs.py` directly.** That is always the correct answer and needs no searching.
+The scanner does the deterministic half — enumerating files and classifying filenames, the same way every run. It does **not** read file contents; you do that in step 4 with the Read tool. That split is deliberate: it means the script is Python standard library only, with nothing to install, so it behaves identically in Cowork and in a local Claude Code routine.
 
-Only if that path somehow doesn't exist, search for the script itself (not for a `SKILL.md` — this file is named `rename-invoices.md`, and searching for the wrong name silently yields an empty result that `dirname` turns into `.`):
+The scanner sits alongside this file at `scripts/scan_docs.py`. **You have just read this file from a known directory — use `<that directory>/scripts/scan_docs.py` directly.** That is always the correct answer and needs no searching.
+
+Only if that path somehow doesn't exist, search for the script by its own name — not for a `SKILL.md`, because this file is called `rename-invoices.md` and searching for the wrong name yields an empty result that `dirname` silently turns into `.`:
 
 ```bash
-SCAN=$(find /sessions /home /root /mnt /opt -type f -path '*rename-invoices/scripts/scan_pdfs.py' 2>/dev/null | head -1)
-[ -n "$SCAN" ] || { echo "ERROR: scan_pdfs.py not found — stopping"; exit 1; }
-PY=$(command -v python3 || command -v python)
-"$PY" "$SCAN" "<folder>"
+SCAN=$(find / -type f -path '*rename-invoices/scripts/scan_docs.py' 2>/dev/null | head -1)
+[ -n "$SCAN" ] || { echo "ERROR: scan_docs.py not found — stopping"; exit 1; }
 ```
+
+Interpreter: `python` on Windows, `python3` on Linux — `command -v python3 || command -v python` picks correctly on both. Nothing else is required: no packages, no PDF tools, no OCR engine.
 
 The scanner is **non-recursive by default** and should stay that way — `_TO SORT` subfolders are Kevin's own filing, not input. Pass `--recursive` only if he asks.
 
@@ -135,31 +155,34 @@ The scanner writes JSON to stdout. Keys per file:
 |---|---|
 | `path` | absolute path |
 | `filename` | basename |
+| `kind` | `"pdf"` or `"image"` |
 | `already_renamed` | bool — matches the full naming pattern |
 | `not_ready` | bool — filename starts with a "not yet ready" marker |
-| `text` | first ~6000 chars of extracted text |
-| `text_empty` | bool — extraction worked but the PDF has no text layer (scanned image) |
-| `error` | extraction error message, or null |
-| `windows_path` | best-effort Windows path for `computer://` links, or null |
+| `size_bytes` | int — `0` means a broken or empty file; flag it, don't try to read it |
 
-### 3. Decide what to do per PDF
+### 3. Decide what to do per file
 
 For each entry in the scanner output, in this priority order — first match wins:
 
 | Scanner flags | Action |
 |---|---|
 | `not_ready = true` | **Skip.** Kevin has explicitly marked this file as "not ready". |
-| `error` non-null | **Needs attention.** Don't guess names from filenames alone. |
-| `already_renamed = true` **and** every field looks complete (valid date, non-empty company, non-empty description, non-empty invoice number, `.pdf` extension) | **Skip.** |
-| `already_renamed = true` **but** a field is missing/empty/obviously wrong | **Re-process.** Extract from the PDF contents and rename. |
-| `text_empty = true` | **Read the PDF directly** with the Read tool (it renders PDF pages natively), then continue at step 4. If the fields still aren't readable → needs attention, reason "scanned PDF, no readable text". |
-| `already_renamed = false` | **Process.** Extract from the PDF contents and rename. |
+| `size_bytes = 0` | **Needs attention**, reason "empty file". Don't try to read it. |
+| `already_renamed = true` **and** every field looks complete (valid date, non-empty company, non-empty description, and either an invoice number or a deliberate bare `Receipt`) | **Skip.** |
+| `already_renamed = true` **but** a field is missing/empty/obviously wrong | **Re-process** — go to step 4. |
+| `already_renamed = false` | **Process** — go to step 4. |
 
 The completeness check exists because Kevin wants partial renames fixed automatically, but fully-correct names left alone — re-renaming a correct file wastes time and risks introducing drift.
 
-### 4. Extract fields from the PDF text
+### 4. Read the file and extract the fields
 
-From the `text` returned by the scanner (or from the Read tool for `text_empty` files), identify:
+**Open each file to be processed with the Read tool.** It renders PDF pages and images natively, so there is nothing to install and no extraction step that can fail.
+
+For PDFs, pass `pages: "1-2"` — the header fields are always on the first page or two, and reading a 30-page itemised invoice in full wastes context for nothing. Only widen the range if a field you need genuinely isn't there.
+
+If a PDF turns out to be a scan with no legible text, treat it exactly like an image receipt — see step 4a.
+
+Identify:
 
 1. **Issuer / host company** — usually the entity at the top of the invoice, or after "From:" or in the "Sold by" field for marketplace direct sales. Normalise to a short brand name (see earlier examples).
 2. **Third-party seller** (marketplace case only) — look for "Sold by [Seller]" on Amazon/eBay invoices where the seller is not the marketplace itself. If host and seller are the same legal family ("Sold by Amazon Business EU" on an Amazon Business invoice), treat as direct and omit the seller.
@@ -169,15 +192,38 @@ From the `text` returned by the scanner (or from the Read tool for `text_empty` 
 
 If any of these cannot be determined confidently, **do not rename** — add the file to "needs attention" with a short reason. It is better to skip one than to guess wrong.
 
+### 4a. Image receipts (`kind = "image"`)
+
+There is no OCR step and no extracted text to cross-check against — your reading of the image is the only reading. That puts the whole burden on how carefully you look:
+
+1. **Read the date and the number character by character.** These are the two fields that must be exactly right, and they're where a misreading becomes a silent, permanent filing error. The confusable pairs on a faint thermal print are `0`/`O`, `1`/`l`/`I`, `5`/`S`, `8`/`B`, `2`/`Z` — if a character could plausibly be either, treat the field as unreadable rather than picking the likelier one.
+2. **Sanity-check the date against the rest of the image.** A receipt dated outside the last couple of years, or in the future, almost certainly means you've misread a digit or picked up a card-expiry date.
+3. If the photo is too blurred, cropped, glared or crumpled to read the date or the supplier → **needs attention**, reason "image too unclear to read". Don't half-name it.
+4. A receipt with no readable number but a clear date, supplier and items is fine — use the bare `Receipt` form. Missing number is normal; missing date or supplier is not.
+
+Thermal receipts fade, so Kevin's photos are often of already-faint originals. Being unable to read one is an expected outcome — say so and move on rather than straining to produce a name.
+
+Everything else — the naming pattern, marketplace rules, description guidance, the four summary categories — applies to images exactly as it does to PDFs.
+
 ### 5. Apply the renames
 
 In **dry-run mode**, stop here: report exactly what step 6 would report, with every `Renamed` entry relabelled `Would rename`, and change nothing on disk.
 
-Otherwise use `mv -n` (via the Bash tool) one file at a time. `-n` refuses to clobber an existing file, so a mistake in the collision check can't destroy an invoice. Quote both paths — filenames contain spaces and ampersands.
+Otherwise rename one file at a time, using the form that matches the platform. Both refuse to overwrite an existing file, so a mistake in the collision check can't destroy an invoice.
+
+**Windows (local Claude Code)** — use PowerShell. `-LiteralPath` takes the path exactly as given, so `[`, `]` and other glob characters in supplier filenames can't misfire, and `-NewName` takes a bare filename, not a path:
+
+```powershell
+Rename-Item -LiteralPath "C:\...\_TO SORT\<old>.pdf" -NewName "2026-04-12 Amazon - Plant Label Markers - Invoice GB639V1QABEI.pdf"
+```
+
+**Linux (Cowork)** — use `mv -n` via the Bash tool:
 
 ```bash
 mv -n "/.../<old>.pdf" "/.../2026-04-12 Amazon - Plant Label Markers - Invoice GB639V1QABEI.pdf"
 ```
+
+Quote both arguments either way — these filenames contain spaces and ampersands. Don't batch renames into one long chained command: one file per call, so a failure halfway through is obvious and the rest still run.
 
 **Collision handling.** Before each rename, check whether the target name already exists.
 
@@ -186,9 +232,9 @@ mv -n "/.../<old>.pdf" "/.../2026-04-12 Amazon - Plant Label Markers - Invoice G
   - correct: `2026-04-12 Amazon - Cables - Invoice GB123 (2).pdf`
   - wrong: `2026-04-12 Amazon - Cables - Invoice GB123.pdf (2)`
 
-  A suffix after the extension leaves the file with no `.pdf` extension at all: Windows loses the file association, and the scanner stops seeing it entirely, so it silently drops out of the workflow for good.
+  A suffix after the extension leaves the file with no recognised extension at all: Windows loses the file association, and the scanner stops seeing it entirely, so it silently drops out of the workflow for good.
 
-If `mv -n` reports it did nothing, treat that as a collision you missed — do not retry with `-f`.
+If the rename reports it did nothing (or `Rename-Item` errors that the target exists), treat that as a collision you missed — do not retry with `mv -f` or `Rename-Item -Force`.
 
 ### 6. Report results
 
@@ -211,7 +257,10 @@ Needs attention (L):
   <filename>  — <reason, e.g. "no invoice number found, only order number">
 ```
 
-Each renamed file should then be linked individually with `computer://` URLs so Kevin can open them from the chat. The link format the desktop app accepts is `computer://<absolute-windows-path-with-%20-for-spaces>` — URL-encode the scanner's `windows_path` field and drop it straight in. If `windows_path` is null, fall back to the Cowork-mounted path; the app rewrites it.
+Link each renamed file so Kevin can open it from the chat, using the scanner's `path` with the **new** filename substituted:
+
+- **Local Claude Code** — a plain markdown link to the file path.
+- **Cowork desktop app** — a `computer://<absolute-windows-path-with-%20-for-spaces>` URL, URL-encoded. If the mount doesn't expose a Windows path, use the mounted path and the app rewrites it.
 
 ## Running unattended (scheduled tasks)
 
@@ -273,9 +322,30 @@ Filename: `GET-INVOICE Order received – NorthridgeFix.pdf`
 Invoice number printed as `2026/0412`
 → `… - Invoice 2026-0412.pdf` (slash becomes a plain hyphen, no surrounding spaces)
 
+**Example 7 — Photographed till receipt, no number**
+File: `IMG_20260412_141233.jpg`
+Read: Screwfix, 12/04/2026, 2× 25mm masking tape and a tube of silicone sealant. No receipt number printed.
+→ `2026-04-12 Screwfix - Masking Tape & Silicone Sealant - Receipt.jpg`
+
+**Example 8 — Photographed till receipt with a number**
+File: `PXL_20260408_093015.PNG`
+Read: Halfords, 08/04/2026, wiper blades. "Receipt No: 0084471" printed at the foot.
+→ `2026-04-08 Halfords - Wiper Blades - Receipt 0084471.png` (extension lowercased)
+
+**Example 9 — Invoice that happens to be a photo**
+File: `scan0021.jpg` — a photographed A4 VAT invoice from NorthridgeFix, invoice number `NF-4482`, dated 9 April 2026, for a laptop board repair.
+→ `2026-04-09 NorthridgeFix - Laptop Board Repair - Invoice NF-4482.jpg`
+It's an invoice, so it takes `Invoice [Number]` — the `.jpg` extension doesn't make it a receipt.
+
+**Example 10 — Unreadable photo**
+File: `IMG_20260330_201144.jpg` — faded thermal receipt, badly glared, supplier name illegible.
+→ **Don't rename.** Needs attention, reason "image too unclear to read".
+
 ## Common pitfalls (earned the hard way)
 
-- **Don't trust the filename alone.** Amazon's default filenames are often random hashes; derive every field from the PDF's contents.
+- **Don't trust the filename alone.** Amazon's default filenames are often random hashes and camera filenames (`IMG_…`, `PXL_…`) carry nothing but a timestamp; derive every field from the contents.
+- **Don't trust a camera filename's date either.** `IMG_20260412_…` is when the photo was taken, which is often days after the purchase. The date comes off the receipt itself.
+- **Don't rush an image.** There's no OCR text to fall back on — read it properly (step 4a), and if a digit is genuinely ambiguous, flag rather than pick.
 - **Don't confuse billing date with invoice date.** Some vendors print both. The invoice/issue date is what we want.
 - **Don't use the "Sold by" block as the description source.** That's the seller; descriptions come from the line items.
 - **Beware reverse-charge VAT invoices** (e.g. Anthropic): the supplier is in a different country from the billing address. The issuer is still the supplier — don't use the billing entity.
@@ -286,4 +356,7 @@ Invoice number printed as `2026/0412`
 
 ## Bundled scripts
 
-- `scripts/scan_pdfs.py` — scans a folder, returns JSON with per-PDF metadata and extracted text. Run with `python3 scripts/scan_pdfs.py "<folder>"`. Matches `.pdf` and `.PDF`. Uses `pdftotext -layout` if available (fastest/cleanest) with a pdfplumber fallback, and sets `text_empty` when a PDF has no text layer at all.
+- `scripts/scan_docs.py` — inventories a folder, returns JSON with per-file metadata. Run with `python scripts/scan_docs.py "<folder>"`; add `--recursive` for subfolders. Matches `.pdf`, `.jpg`, `.jpeg` and `.png`, case-insensitively.
+
+  **Python standard library only** — no packages, no PDF tools, no OCR engine, nothing to install, identical behaviour on Windows and Linux. It handles the deterministic work (which files exist, which filenames already conform, which are flagged not-ready) and nothing else. File contents are read by Claude in step 4, which is what keeps the dependency list empty.
+- `default_folder.txt` *(optional, create if wanted)* — one line, the absolute path of the accounts inbox. Lets a local routine run with a one-line prompt and no folder argument.
