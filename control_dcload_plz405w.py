@@ -41,7 +41,7 @@ import sys
 import pyvisa
 
 # --- Connection configuration -------------------------------------------------
-LAN_ADDRESS     = "192.168.1.101"  # load IP: its LAN settings menu / web page
+LAN_ADDRESS     = "192.168.10.34"  # load IP: its LAN settings menu / web page
 LAN_RESOURCE    = f"TCPIP::{LAN_ADDRESS}::5025::SOCKET"  # SCPI-RAW, port 5025
 VISA_BACKEND    = "@py"           # pyvisa-py, pure Python; "" uses vendor VISA
 TIMEOUT_READ_S  = 2.0             # per-reply read timeout

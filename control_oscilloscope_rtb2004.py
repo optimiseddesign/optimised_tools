@@ -48,7 +48,7 @@ CONNECTION      = CONNECTION_LAN  # transport this run uses - the only switch
 TIMEOUT_READ_S  = 2.0             # per-reply read timeout, either transport
 
 # LAN transport (RsInstrument)
-LAN_ADDRESS     = "192.168.1.100"  # scope IP: Setup > Interface > Ethernet
+LAN_ADDRESS     = "192.168.10.99"  # scope IP: Setup > Interface > Ethernet
 LAN_RESOURCE    = f"TCPIP::{LAN_ADDRESS}::5025::SOCKET"  # raw socket port 5025
 LAN_OPTIONS     = "SelectVisa='socket'"  # RsInstrument's own TCP, no VISA needed
 LAN_MIN_VERSION = "1.53.0"        # RsInstrument release the calls below expect

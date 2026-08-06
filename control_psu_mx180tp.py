@@ -42,7 +42,7 @@ import socket
 import sys
 
 # --- Connection configuration -------------------------------------------------
-LAN_ADDRESS       = "192.168.1.101"  # PSU IP: Menu > Remote Control Interfaces
+LAN_ADDRESS       = "192.168.10.25"  # PSU IP: Menu > Remote Control Interfaces
 LAN_PORT          = 9221             # TTi instrument control/monitoring socket
 TIMEOUT_CONNECT_S = 5.0              # TCP connection attempt
 TIMEOUT_READ_S    = 2.0              # per-reply read timeout
