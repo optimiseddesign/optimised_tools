@@ -22,6 +22,11 @@ Connection:
     static) in its LAN settings menu; the same settings are also reachable
     from the load's built-in web page.
   - Commands are ASCII lines terminated with LF; replies are LF-terminated.
+    Numeric replies carry an explicit sign, e.g. the empty error queue reads
+    back as '+0,"No error"'.
+  - Unlike a COM port, the load's LAN interface is not exclusive: it accepts
+    a second SCPI-RAW session alongside this one, so a run can be disturbed
+    by another program talking to the load at the same time.
   - All instrument I/O is confined to open_connection(), close_connection(),
     scpi_send(), scpi_query() and scpi_set(); the command functions never see
     the transport, so the USB or RS232C ports (both fitted as standard) can
@@ -44,6 +49,7 @@ import pyvisa
 LAN_ADDRESS     = "192.168.10.34"  # load IP: its LAN settings menu / web page
 LAN_RESOURCE    = f"TCPIP::{LAN_ADDRESS}::5025::SOCKET"  # SCPI-RAW, port 5025
 VISA_BACKEND    = "@py"           # pyvisa-py, pure Python; "" uses vendor VISA
+TIMEOUT_OPEN_S  = 5.0             # TCP connect wait (pyvisa-py defaults to 10 s)
 TIMEOUT_READ_S  = 2.0             # per-reply read timeout
 TX_EOL          = "\n"            # commands sent with bare LF
 RX_EOL          = "\n"            # reply lines terminated with LF
@@ -52,10 +58,10 @@ MS_PER_S        = 1000            # PyVISA timeouts are in milliseconds
 # --- Protocol constants -------------------------------------------------------
 CMD_CLEAR_STATUS = "*CLS"             # clear status registers and error queue
 CMD_GET_IDENTITY = "*IDN?"            # manufacturer,model,serial,firmware
-CMD_GET_ERROR    = "SYSTem:ERRor?"    # oldest error in the queue; "0,..." = none
+CMD_GET_ERROR    = "SYSTem:ERRor?"    # oldest error in the queue, code first
 CMD_SET_LOCAL    = "SYSTem:COMMunicate:RLSTate LOCal"  # release the front panel
-REPLY_NO_ERROR   = "0,"               # SYSTem:ERRor? prefix when queue is empty
-IDENTITY_FIELDS  = 4                  # *IDN? replies with four comma-separated fields
+REPLY_NO_ERROR   = 0                  # error code when the queue is empty
+IDENTITY_FIELDS  = 4                  # *IDN? reply has four comma-separated fields
 MODEL_EXPECTED   = "PLZ405W"          # the PLZ-5W series shares a command set but
                                       # not its ratings - refuse the wrong model
 
@@ -83,10 +89,13 @@ def lan_open() -> None:
 
     try:
         resource_manager = pyvisa.ResourceManager(VISA_BACKEND)
-        dcload = resource_manager.open_resource(LAN_RESOURCE)
-    except pyvisa.Error as exc:
-        # Typical causes: load powered off or on another subnet, wrong
-        # LAN_ADDRESS, or another program already holding the SCPI-RAW port.
+        dcload = resource_manager.open_resource(
+            LAN_RESOURCE, open_timeout=int(TIMEOUT_OPEN_S * MS_PER_S))
+    except Exception as exc:
+        # Typical causes: load powered off, LAN unplugged, or the wrong
+        # LAN_ADDRESS - it fails the same way on an address with nothing
+        # listening. Caught broadly because pyvisa-py raises a bare Exception,
+        # not a pyvisa.Error, when the TCP connect fails.
         print(f"Could not open {LAN_RESOURCE}: {exc}")
         sys.exit(1)
     # A raw socket carries no message boundaries, so PyVISA must be told the
@@ -97,8 +106,15 @@ def lan_open() -> None:
 
 
 def scpi_send(command: str) -> None:
-    """Send a SCPI command that produces no reply."""
-    dcload.write(command)
+    """Send a SCPI command that produces no reply; print and exit on failure."""
+    try:
+        dcload.write(command)
+    except (pyvisa.Error, OSError) as exc:
+        # A link that drops mid-run - load powered off or unplugged - surfaces
+        # as an OSError (ConnectionAbortedError/ConnectionResetError) straight
+        # from the socket, not as a pyvisa.Error, so both are caught
+        print(f"Could not send {command}: {exc}")
+        sys.exit(1)
 
 
 def scpi_query(command: str, timeout_s: float = TIMEOUT_READ_S) -> str:
@@ -110,7 +126,9 @@ def scpi_query(command: str, timeout_s: float = TIMEOUT_READ_S) -> str:
     dcload.timeout = int(timeout_s * MS_PER_S)
     try:
         return dcload.query(command).strip()
-    except pyvisa.Error as exc:
+    except (pyvisa.Error, OSError) as exc:
+        # pyvisa.Error covers the timeout, OSError a dropped link (see
+        # scpi_send); a query can hit either, having to write and then read
         print(f"Load did not reply to {command}: {exc}")
         sys.exit(1)
 
@@ -126,7 +144,11 @@ def scpi_set(command: str, argument: str = "") -> None:
         command = command + " " + argument
     scpi_send(command)
     error = scpi_query(CMD_GET_ERROR)
-    if error.startswith(REPLY_NO_ERROR):
+    # Reply is code,"description" with the code signed, e.g. '+0,"No error"'.
+    # Compare the code as a number: as text it would have to match both "0"
+    # and "+0", and searching the whole reply for a "0" would accept
+    # '-100,"Command error"'.
+    if int(error.split(",")[0]) == REPLY_NO_ERROR:
         return                    # command accepted
     else:
         print(f"Command {command} failed: {error}")
@@ -147,7 +169,7 @@ def cmd_identify(print_results: bool = True) -> dict[str, str]:
         print(f"Identify failed: unexpected reply {identity!r}")
         sys.exit(1)
 
-    if MODEL_EXPECTED in info["model"]:
+    if info["model"] == MODEL_EXPECTED:
         if print_results:
             print("DC load identification:")
             for key, value in info.items():
@@ -161,12 +183,20 @@ def cmd_identify(print_results: bool = True) -> dict[str, str]:
 
 
 def close_connection() -> None:
-    # Hand the front panel back: the load latches into remote on the first
-    # command received and would otherwise stay locked out after the run
+    # Hand the front panel back: LOCal (local) releases REMote, the state in
+    # which the panel is locked out and only commands are obeyed. The load
+    # enters REMote only when the controller asserts the IEEE-488 remote
+    # enable signal (REN), which a raw socket has no way to do - so over
+    # SCPI-RAW the load stays local and this command changes nothing. It is
+    # kept because VXI-11 and HiSLIP do assert REN, and switching
+    # LAN_RESOURCE to one of those would otherwise leave the panel locked
+    # out after a run.
+    # resource_manager is deliberately left open: PyVISA hands out one shared
+    # manager per backend, so closing it would invalidate any other PyVISA
+    # session in the same program. dcload.close() is what frees the socket.
     if dcload is not None:
         scpi_send(CMD_SET_LOCAL)
         dcload.close()
-        resource_manager.close()
         print(f"{LAN_RESOURCE} closed")
 
 
