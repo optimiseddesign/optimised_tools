@@ -481,13 +481,13 @@ def main() -> None:
     # Confirm the load is alive and is the expected model
     cmd_identify()
 
-    # Put the load in a known mode and range before setting a level
-    cmd_set_mode(MODE_CC)
-    cmd_set_current_range(RANGE_MED)
+    # Query the load without setting anything
+    cmd_get_mode(MODE_CC)   
+    cmd_get_current_range(RANGE_MED)
 
-    # Set example current and voltage setpoints and confirm the readback
-    cmd_set_current(1.000)
-    cmd_set_voltage(5.000)
+    # Get current and voltage setpoints
+    cmd_get_current(True)
+    cmd_get_voltage(True)
 
     # Measure the terminal voltage/current with the input still disabled
     cmd_measure_voltage()
@@ -496,10 +496,11 @@ def main() -> None:
     # Enabling the input draws a real load from whatever is on the
     # terminals - left commented out so running this file never does that
     # unintentionally. Uncomment to exercise the enable/disable path.
-    # cmd_set_input_enable(True)
-    # cmd_measure_voltage()
-    # cmd_measure_current()
-    # cmd_set_input_enable(False)
+    
+    #cmd_set_input_enable(True)
+    #cmd_measure_voltage()
+    #cmd_measure_current()
+    #cmd_set_input_enable(False)
 
     # Done - release the connection
     close_connection()
