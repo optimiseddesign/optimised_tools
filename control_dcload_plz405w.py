@@ -4,9 +4,9 @@ Drives the load input remotely - operation mode, current and voltage ranges,
 load level and input on/off - so a supply or converter under test can be
 loaded without touching the front panel.
 
-This version covers the transport, connection and identification only; the
-mode, range, level and on/off commands follow once the connection is proven
-on the hardware.
+This version covers the transport, connection, identification and the CC
+mode current setpoint; operation mode, current/voltage ranges and input
+on/off follow once each is proven on the hardware in turn.
 
 Connection:
   - LAN (LXI): the PLZ-5W series is LXI compliant and accepts VXI-11, HiSLIP
@@ -60,6 +60,10 @@ CMD_CLEAR_STATUS = "*CLS"             # clear status registers and error queue
 CMD_GET_IDENTITY = "*IDN?"            # manufacturer,model,serial,firmware
 CMD_GET_ERROR    = "SYSTem:ERRor?"    # oldest error in the queue, code first
 CMD_SET_LOCAL    = "SYSTem:COMMunicate:RLSTate LOCal"  # release the front panel
+CMD_SET_CURRENT  = "SOURce:CURRent"   # set the CC mode current level, A
+CMD_GET_CURRENT  = "SOURce:CURRent?"  # query the current setpoint, A - the
+                                      # commanded level, not the measured load
+                                      # current (that is MEASure:CURRent?)
 REPLY_NO_ERROR   = 0                  # error code when the queue is empty
 IDENTITY_FIELDS  = 4                  # *IDN? reply has four comma-separated fields
 MODEL_EXPECTED   = "PLZ405W"          # the PLZ-5W series shares a command set but
@@ -182,6 +186,47 @@ def cmd_identify(print_results: bool = True) -> dict[str, str]:
     return info
 
 
+def cmd_set_current(amps: float) -> float:
+    """Set the CC mode current level, then read back the setpoint to confirm.
+
+    Only sets the level - the load's own operation mode and input on/off
+    state are untouched, so this has no effect unless the load is already in
+    CC mode with the input on.
+
+    Returns the confirmed setpoint as a float so other functions can use it.
+    """
+    scpi_set(CMD_SET_CURRENT, f"{amps:.3f}")
+    print(f"Set current: {amps:.3f} A")
+    
+    amps_get = cmd_get_current()
+
+    if amps_get != amps:
+        # Set current and read set-point differ somehow
+        print(f"Expected a {MODEL_EXPECTED}, but found a {info['model']!r}")
+        sys.exit(1)
+    else:
+        return amps_get
+
+
+def cmd_get_current() -> float:
+    """Get the CC mode current level set point.
+
+    Only gets the level - the load's own operation mode and input on/off
+    state are untouched, so this has no effect unless the load is already in
+    CC mode with the input on.
+
+    Returns the confirmed setpoint as a float so other functions can use it.
+    """
+    current_get = scpi_query(CMD_GET_CURRENT)
+    try:
+        current_get_amps = float(current_get)
+    except ValueError:
+        print(f"Set current returned non-numeric readback: {current_get!r}")
+        sys.exit(1)
+    print(f"Get current: {current_get_amps:.3f} A (confirmed)")
+    return current_get_amps
+
+
 def close_connection() -> None:
     # Hand the front panel back: LOCal (local) releases REMote, the state in
     # which the panel is locked out and only commands are obeyed. The load
@@ -206,6 +251,10 @@ def main() -> None:
 
     # Confirm the load is alive and is the expected model
     cmd_identify()
+
+    # Set an example current level and confirm the readback (mode and input
+    # on/off are untouched, so nothing actually loads the DUT yet)
+    cmd_set_current(2.93)
 
     # Done - release the connection
     close_connection()
