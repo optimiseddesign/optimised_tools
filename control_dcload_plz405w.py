@@ -1,15 +1,10 @@
 """Control a Kikusui PLZ405W electronic DC load over LAN.
 
-Drives the load input remotely - operation mode, current and voltage ranges,
-load level and input on/off - so a supply or converter under test can be
-loaded without touching the front panel.
-
-Covers connection, identification, operation mode, current/voltage range,
-the current and voltage setpoints, actual (measured) voltage/current, and
-input enable - hardware-verified end to end, including a live loaded test at
-both 1 A and 5 A into a real supply. main()'s hardware test leaves the
-enable/disable calls commented out, so running this file never draws current
-on its own; calling cmd_set_input_enable(True) from another script does.
+Drives the load input remotely - operation mode, current/voltage ranges and
+setpoints, and input enable - so a supply or converter under test can be
+loaded without touching the front panel. main()'s hardware test leaves the
+input-enable calls commented out, so running this file never draws current on
+its own; call cmd_set_input_enable(True) from another script to do that.
 
 Connection:
   - LAN (LXI): the PLZ-5W series is LXI compliant and accepts VXI-11, HiSLIP
@@ -64,13 +59,9 @@ CMD_GET_IDENTITY = "*IDN?"            # manufacturer,model,serial,firmware
 CMD_GET_ERROR    = "SYSTem:ERRor?"    # oldest error in the queue, code first
 CMD_SET_LOCAL    = "SYSTem:COMMunicate:RLSTate LOCal"  # release the front panel
 CMD_SET_CURRENT  = "SOURce:CURRent"   # set the CC mode current level, A
-CMD_GET_CURRENT  = "SOURce:CURRent?"  # query the current setpoint, A - the
-                                      # commanded level, not the measured load
-                                      # current (that is MEASure:CURRent?)
+CMD_GET_CURRENT  = "SOURce:CURRent?"  # query the current setpoint, A
 CMD_SET_VOLTAGE  = "SOURce:VOLTage"   # set the CV mode voltage level, V
-CMD_GET_VOLTAGE  = "SOURce:VOLTage?"  # query the voltage setpoint, V - the
-                                      # commanded level, not the measured load
-                                      # voltage (that is MEASure:VOLTage?)
+CMD_GET_VOLTAGE  = "SOURce:VOLTage?"  # query the voltage setpoint, V
 CMD_SET_MODE     = "SOURce:FUNCtion"  # set the operation mode
 CMD_GET_MODE     = "SOURce:FUNCtion?" # query the operation mode
 CMD_SET_CURRENT_RANGE = "SOURce:CURRent:RANGe"   # set the CC/CR/CP range
@@ -79,10 +70,8 @@ CMD_SET_VOLTAGE_RANGE = "SOURce:VOLTage:RANGe"   # set the CV range
 CMD_GET_VOLTAGE_RANGE = "SOURce:VOLTage:RANGe?"  # query the CV range
 CMD_MEASURE_VOLTAGE = "MEASure:VOLTage?"  # actual load terminal voltage, V
 CMD_MEASURE_CURRENT = "MEASure:CURRent?"  # actual load terminal current, A
-CMD_SET_INPUT_ENABLE = "INPut"        # turn the load input on/off - enables/
-                                      # disables the load, drawing (or not)
-                                      # the set mode/range/level from the DUT
-CMD_GET_INPUT_ENABLE = "INPut?"       # query whether the load input is on
+CMD_SET_INPUT_ENABLE = "INPut"        # enable/disable the load input
+CMD_GET_INPUT_ENABLE = "INPut?"       # query whether the load input is enabled
 REPLY_NO_ERROR   = 0                  # error code when the queue is empty
 CURRENT_TOLERANCE_A = 0.001           # allows for the load's 3 d.p. reply rounding
 VOLTAGE_TOLERANCE_V = 0.001           # allows for the load's 3 d.p. reply rounding
@@ -99,18 +88,13 @@ MODE_CP = "CP"                        # constant power
                                       # on the load but is out of scope here
 
 # --- Current/voltage ranges -------------------------------------------------
-# Each range is a coarse setting, not a specific number - it picks which of
-# the load's internal shunts is in circuit, trading maximum level for
-# resolution at the low end. Rated (specification) maximum for each range:
-#   current (CC/CR/CP): LOW = 0.8 A, MED = 8 A, HIGH = 80 A
-#   voltage (CV):        LOW = 15 V,             HIGH = 150 V (no MED)
-# The load actually accepts setpoints up to 5% over these (e.g. LOW current
-# up to 0.84 A, confirmed by bisecting the load's own accept/reject boundary
-# on this unit, serial VJ001122) - that headroom is calibration margin, not a
-# value to design a real test around.
-RANGE_LOW  = "LOW"                    # current: 0.8 A rated; voltage: 15 V rated
-RANGE_MED  = "MED"                    # current: 8 A rated (current axis only)
-RANGE_HIGH = "HIGH"                   # current: 80 A rated; voltage: 150 V rated
+# Range selects a maximum level, not an exact value - lower ranges trade
+# headroom for resolution. Rated maximum for each:
+#   current (CC/CR/CP): LOW 0.8 A, MED 8 A, HIGH 80 A
+#   voltage (CV):        LOW 15 V,           HIGH 150 V (no MED)
+RANGE_LOW  = "LOW"                    # current 0.8 A; voltage 15 V
+RANGE_MED  = "MED"                    # current 8 A (current axis only)
+RANGE_HIGH = "HIGH"                   # current 80 A; voltage 150 V
 
 # Single shared session objects (used by all functions); created by
 # open_connection(), both None until then
@@ -121,11 +105,9 @@ dcload = None                     # PyVISA session to the load
 def open_connection() -> None:
     """Open the LAN connection and put the load in a known state."""
     lan_open()
-    # Clear the load's status registers and error queue. Deliberately no
-    # *RST: the protection settings (OCP, OPP, UVP) and any panel setup must
-    # be preserved. Sent via scpi_set() so the error queue is read straight
-    # back, confirming the SCPI link works in both directions before anything
-    # is driven.
+    # Clear the status/error queue - no *RST, since that would reset the
+    # protection settings (OCP/OPP/UVP) and panel setup. Using scpi_set()
+    # here also confirms the link works both ways before anything else runs.
     scpi_set(CMD_CLEAR_STATUS)
 
 
@@ -139,10 +121,9 @@ def lan_open() -> None:
         dcload = resource_manager.open_resource(
             LAN_RESOURCE, open_timeout=int(TIMEOUT_OPEN_S * MS_PER_S))
     except Exception as exc:
-        # Typical causes: load powered off, LAN unplugged, or the wrong
-        # LAN_ADDRESS - it fails the same way on an address with nothing
-        # listening. Caught broadly because pyvisa-py raises a bare Exception,
-        # not a pyvisa.Error, when the TCP connect fails.
+        # Typical causes: load off, LAN unplugged, or wrong LAN_ADDRESS.
+        # Caught broadly because pyvisa-py raises a bare Exception here, not
+        # a pyvisa.Error.
         print(f"Could not open {LAN_RESOURCE}: {exc}")
         sys.exit(1)
     # A raw socket carries no message boundaries, so PyVISA must be told the
@@ -157,9 +138,8 @@ def scpi_send(command: str) -> None:
     try:
         dcload.write(command)
     except (pyvisa.Error, OSError) as exc:
-        # A link that drops mid-run - load powered off or unplugged - surfaces
-        # as an OSError (ConnectionAbortedError/ConnectionResetError) straight
-        # from the socket, not as a pyvisa.Error, so both are caught
+        # A dropped link (load off/unplugged) raises OSError, not
+        # pyvisa.Error - both are caught
         print(f"Could not send {command}: {exc}")
         sys.exit(1)
 
@@ -175,7 +155,7 @@ def scpi_query(command: str, timeout_s: float = TIMEOUT_READ_S) -> str:
         return dcload.query(command).strip()
     except (pyvisa.Error, OSError) as exc:
         # pyvisa.Error covers the timeout, OSError a dropped link (see
-        # scpi_send); a query can hit either, having to write and then read
+        # scpi_send) - a query can hit either since it writes then reads
         print(f"Load did not reply to {command}: {exc}")
         sys.exit(1)
 
@@ -191,10 +171,8 @@ def scpi_set(command: str, argument: str = "") -> None:
         command = command + " " + argument
     scpi_send(command)
     error = scpi_query(CMD_GET_ERROR)
-    # Reply is code,"description" with the code signed, e.g. '+0,"No error"'.
-    # Compare the code as a number: as text it would have to match both "0"
-    # and "+0", and searching the whole reply for a "0" would accept
-    # '-100,"Command error"'.
+    # Reply is code,"description", code signed (e.g. '+0,"No error"') -
+    # compare as int so "+0" matches and a stray "0" elsewhere doesn't.
     if int(error.split(",")[0]) == REPLY_NO_ERROR:
         return                    # command accepted
     else:
@@ -232,16 +210,13 @@ def cmd_identify(print_results: bool = True) -> dict[str, str]:
 def cmd_set_current(amps: float) -> float:
     """Set the CC mode current level, then read back the setpoint to confirm.
 
-    Only sets the level - the load's own operation mode and input enable
-    state are untouched, so this has no effect unless the load is already in
-    CC mode with the input enabled.
+    Only sets the level - mode and input enable are untouched.
 
     Returns the confirmed setpoint as a float so other functions can use it.
     """
     scpi_set(CMD_SET_CURRENT, f"{amps:.3f}")
-    print(f"Set current: {amps:.3f} A")
 
-    amps_get = cmd_get_current()
+    amps_get = cmd_get_current(print_results=False)
 
     if abs(amps_get - amps) > CURRENT_TOLERANCE_A:
         # Readback should match to the 3 d.p. sent; a real mismatch means the
@@ -249,10 +224,11 @@ def cmd_set_current(amps: float) -> float:
         print(f"Set current {amps:.3f} A but readback is {amps_get:.3f} A")
         sys.exit(1)
     else:
+        print(f"Set current: {amps:.3f} A ({amps_get:.3f} A confirmed)")
         return amps_get
 
 
-def cmd_get_current() -> float:
+def cmd_get_current(print_results: bool = True) -> float:
     """Query the CC mode current setpoint - the commanded level, not the
     measured load current (that is cmd_measure_current()).
 
@@ -264,23 +240,21 @@ def cmd_get_current() -> float:
     except ValueError:
         print(f"Get current returned non-numeric readback: {current_get!r}")
         sys.exit(1)
-    print(f"Get current: {current_get_amps:.3f} A (confirmed)")
+    if print_results:
+        print(f"Get current: {current_get_amps:.3f} A")
     return current_get_amps
 
 
 def cmd_set_voltage(volts: float) -> float:
     """Set the CV mode voltage level, then read back the setpoint to confirm.
 
-    Only sets the level - the load's own operation mode and input enable
-    state are untouched, so this has no effect unless the load is already in
-    CV mode with the input enabled.
+    Only sets the level - mode and input enable are untouched.
 
     Returns the confirmed setpoint as a float so other functions can use it.
     """
     scpi_set(CMD_SET_VOLTAGE, f"{volts:.3f}")
-    print(f"Set voltage: {volts:.3f} V")
 
-    volts_get = cmd_get_voltage()
+    volts_get = cmd_get_voltage(print_results=False)
 
     if abs(volts_get - volts) > VOLTAGE_TOLERANCE_V:
         # Readback should match to the 3 d.p. sent; a real mismatch means the
@@ -288,10 +262,11 @@ def cmd_set_voltage(volts: float) -> float:
         print(f"Set voltage {volts:.3f} V but readback is {volts_get:.3f} V")
         sys.exit(1)
     else:
+        print(f"Set voltage: {volts:.3f} V ({volts_get:.3f} V confirmed)")
         return volts_get
 
 
-def cmd_get_voltage() -> float:
+def cmd_get_voltage(print_results: bool = True) -> float:
     """Query the CV mode voltage setpoint - the commanded level, not the
     measured load voltage (that is cmd_measure_voltage()).
 
@@ -303,111 +278,125 @@ def cmd_get_voltage() -> float:
     except ValueError:
         print(f"Get voltage returned non-numeric readback: {voltage_get!r}")
         sys.exit(1)
-    print(f"Get voltage: {voltage_get_v:.3f} V")
+    if print_results:
+        print(f"Get voltage: {voltage_get_v:.3f} V")
     return voltage_get_v
+
+
+def require_input_disabled(action: str) -> None:
+    """Exit if the load input is enabled; call before changing mode/range.
+
+    The load itself refuses a mode/range change while the input is on (SCPI
+    error +102, "Setting conflicts") - this fails the same way, just earlier
+    and with a clearer message.
+    """
+    if cmd_get_input_enable(print_results=False):
+        print(f"Cannot change {action} while the load input is enabled - "
+              f"call cmd_set_input_enable(False) first")
+        sys.exit(1)
 
 
 def cmd_set_mode(mode: str) -> str:
     """Set the operation mode, then read it back to confirm.
 
-    mode is one of the MODE_CC/CR/CV/CP constants above - each holds the
-    load's own two-letter code (e.g. MODE_CC == "CC"), which is what is
-    actually sent and returned, not the Python constant's name.
+    mode is one of MODE_CC/CR/CV/CP (their values, e.g. "CC" - not the
+    names). Requires the load input to be disabled first.
 
     Returns the confirmed mode as a string so other functions can use it.
     """
+    require_input_disabled("mode")
     scpi_set(CMD_SET_MODE, mode)
-    print(f"Set mode: {mode}")
 
-    mode_get = cmd_get_mode()
+    mode_get = cmd_get_mode(print_results=False)
 
     if mode_get != mode:
         print(f"Set mode {mode} but readback is {mode_get}")
         sys.exit(1)
     else:
+        print(f"Set mode: {mode} (confirmed)")
         return mode_get
 
 
-def cmd_get_mode() -> str:
+def cmd_get_mode(print_results: bool = True) -> str:
     """Query the operation mode.
 
-    Returns the load's own two-letter code as a string, e.g. "CC" - compare
-    against the MODE_CC/CR/CV/CP constants above, not their names.
+    Returns the load's code as a string, e.g. "CC" (see MODE_CC/CR/CV/CP).
     """
     mode_get = scpi_query(CMD_GET_MODE)
-    print(f"Get mode: {mode_get}")
+    if print_results:
+        print(f"Get mode: {mode_get}")
     return mode_get
 
 
 def cmd_set_current_range(range_: str) -> str:
     """Set the CC/CR/CP mode current range, then read it back to confirm.
 
-    range_ is one of the RANGE_LOW/MED/HIGH constants above (e.g. RANGE_LOW
-    == "LOW") - see the current/voltage max for each next to their
-    definitions.
+    range_ is RANGE_LOW/MED/HIGH (see their ratings above). Requires the load
+    input to be disabled first.
 
     Returns the confirmed range as a string so other functions can use it.
     """
+    require_input_disabled("current range")
     scpi_set(CMD_SET_CURRENT_RANGE, range_)
-    print(f"Set current range: {range_}")
 
-    range_get = cmd_get_current_range()
+    range_get = cmd_get_current_range(print_results=False)
 
     if range_get != range_:
         print(f"Set current range {range_} but readback is {range_get}")
         sys.exit(1)
     else:
+        print(f"Set current range: {range_} (confirmed)")
         return range_get
 
 
-def cmd_get_current_range() -> str:
+def cmd_get_current_range(print_results: bool = True) -> str:
     """Query the CC/CR/CP mode current range.
 
-    Returns the load's own string, e.g. "LOW" - compare against the
-    RANGE_LOW/MED/HIGH constants above, not their names.
+    Returns the load's string, e.g. "LOW" (see RANGE_LOW/MED/HIGH above).
     """
     range_get = scpi_query(CMD_GET_CURRENT_RANGE)
-    print(f"Get current range: {range_get}")
+    if print_results:
+        print(f"Get current range: {range_get}")
     return range_get
 
 
 def cmd_set_voltage_range(range_: str) -> str:
     """Set the CV mode voltage range, then read it back to confirm.
 
-    range_ is RANGE_LOW or RANGE_HIGH (no RANGE_MED - see the current/voltage
-    max for each next to their definitions above).
+    range_ is RANGE_LOW or RANGE_HIGH (no RANGE_MED for voltage). Requires
+    the load input to be disabled first.
 
     Returns the confirmed range as a string so other functions can use it.
     """
+    require_input_disabled("voltage range")
     scpi_set(CMD_SET_VOLTAGE_RANGE, range_)
-    print(f"Set voltage range: {range_}")
 
-    range_get = cmd_get_voltage_range()
+    range_get = cmd_get_voltage_range(print_results=False)
 
     if range_get != range_:
         print(f"Set voltage range {range_} but readback is {range_get}")
         sys.exit(1)
     else:
+        print(f"Set voltage range: {range_} (confirmed)")
         return range_get
 
 
-def cmd_get_voltage_range() -> str:
+def cmd_get_voltage_range(print_results: bool = True) -> str:
     """Query the CV mode voltage range.
 
-    Returns the load's own string, e.g. "LOW" - compare against RANGE_LOW/
-    RANGE_HIGH above, not their names.
+    Returns the load's string, e.g. "LOW" (see RANGE_LOW/RANGE_HIGH above).
     """
     range_get = scpi_query(CMD_GET_VOLTAGE_RANGE)
-    print(f"Get voltage range: {range_get}")
+    if print_results:
+        print(f"Get voltage range: {range_get}")
     return range_get
 
 
 def cmd_measure_voltage() -> float:
     """Measure the actual voltage at the load's input terminals.
 
-    Unlike cmd_get_current()/cmd_get_mode() etc., this is not a setpoint
-    readback - it is a live measurement, valid whether or not the input is
-    on.
+    A live measurement, not a setpoint readback - valid whether or not the
+    input is enabled.
 
     Returns the measured voltage as a float so other functions can use it.
     """
@@ -424,9 +413,8 @@ def cmd_measure_voltage() -> float:
 def cmd_measure_current() -> float:
     """Measure the actual current through the load's input terminals.
 
-    Unlike cmd_get_current()/cmd_get_mode() etc., this is not a setpoint
-    readback - it is a live measurement, valid whether or not the input is
-    on.
+    A live measurement, not a setpoint readback - valid whether or not the
+    input is enabled.
 
     Returns the measured current as a float so other functions can use it.
     """
@@ -443,48 +431,43 @@ def cmd_measure_current() -> float:
 def cmd_set_input_enable(on: bool) -> bool:
     """Enable or disable the load input, then read it back to confirm.
 
-    Enabling the input applies the current mode/range/level already set on
-    the load to whatever is connected to its terminals - call this last, once
-    those are all as intended.
+    Applies the current mode/range/level to whatever is on the terminals -
+    call this last, once those are set as intended.
 
     Returns the confirmed input state as a bool so other functions can use it.
     """
     scpi_set(CMD_SET_INPUT_ENABLE, "1" if on else "0")
-    print(f"Set input enable: {'ON' if on else 'OFF'}")
 
-    on_get = cmd_get_input_enable()
+    on_get = cmd_get_input_enable(print_results=False)
 
     if on_get != on:
         print(f"Set input enable {'ON' if on else 'OFF'} but readback is "
               f"{'ON' if on_get else 'OFF'}")
         sys.exit(1)
     else:
+        print(f"Set input enable: {'ON' if on else 'OFF'} (confirmed)")
         return on_get
 
 
-def cmd_get_input_enable() -> bool:
+def cmd_get_input_enable(print_results: bool = True) -> bool:
     """Query whether the load input is enabled (on).
 
     Returns the input state as a bool so other functions can use it.
     """
     input_get = scpi_query(CMD_GET_INPUT_ENABLE)
     on_get = input_get == "1"
-    print(f"Get input enable: {'ON' if on_get else 'OFF'}")
+    if print_results:
+        print(f"Get input enable: {'ON' if on_get else 'OFF'}")
     return on_get
 
 
 def close_connection() -> None:
-    # Hand the front panel back: LOCal (local) releases REMote, the state in
-    # which the panel is locked out and only commands are obeyed. The load
-    # enters REMote only when the controller asserts the IEEE-488 remote
-    # enable signal (REN), which a raw socket has no way to do - so over
-    # SCPI-RAW the load stays local and this command changes nothing. It is
-    # kept because VXI-11 and HiSLIP do assert REN, and switching
-    # LAN_RESOURCE to one of those would otherwise leave the panel locked
-    # out after a run.
-    # resource_manager is deliberately left open: PyVISA hands out one shared
-    # manager per backend, so closing it would invalidate any other PyVISA
-    # session in the same program. dcload.close() is what frees the socket.
+    # LOCal is a no-op over this raw-socket transport (no REN line to
+    # assert REMote in the first place) but is kept for when LAN_RESOURCE
+    # switches to VXI-11/HiSLIP, which do assert it.
+    # resource_manager is a shared singleton per backend - closing it would
+    # break any other PyVISA session in the process, so only the resource
+    # itself is closed here.
     if dcload is not None:
         scpi_send(CMD_SET_LOCAL)
         dcload.close()
@@ -503,8 +486,6 @@ def main() -> None:
     cmd_set_current_range(RANGE_MED)
 
     # Set example current and voltage setpoints and confirm the readback
-    # (voltage only takes effect in CV mode, so this is a setpoint check only
-    # while the load stays in CC mode from above)
     cmd_set_current(1.000)
     cmd_set_voltage(5.000)
 
@@ -512,11 +493,9 @@ def main() -> None:
     cmd_measure_voltage()
     cmd_measure_current()
 
-    # Enabling the input applies the setpoint above as a real load on
-    # whatever is connected to the input terminals - left commented out so
-    # running this file never draws current unintentionally. Uncomment to
-    # exercise the full enable/disable path (hardware-verified 2026-08-06 at
-    # both 1 A and 5 A: measured current tracked the setpoint to within 2 mA).
+    # Enabling the input draws a real load from whatever is on the
+    # terminals - left commented out so running this file never does that
+    # unintentionally. Uncomment to exercise the enable/disable path.
     # cmd_set_input_enable(True)
     # cmd_measure_voltage()
     # cmd_measure_current()
