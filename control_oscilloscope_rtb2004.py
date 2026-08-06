@@ -19,9 +19,13 @@ Connection:
     or static) under Setup > Interface > Ethernet on the scope.
   - USB VCP: scope set to USB VCP mode (Setup > Interface > USB > Parameter >
     USB VCP); it appears as a virtual COM port carrying plain ASCII SCPI
-    text. COM ports are exclusive on Windows - a second program holding the
-    port blocks a run - whereas the scope accepts a LAN session even while
-    its front panel is in use.
+    text.
+  - Either transport serves one remote client at a time, so close other scope
+    software before a run (the scope's own front panel stays usable). The two
+    fail differently: a COM port is exclusive on Windows, so a second program
+    holding it fails the open outright, whereas the SCPI socket accepts the
+    second TCP connection and then never answers it - which surfaces as a
+    query timeout, not a connection error (verified on FW 02.400).
   - Commands are ASCII lines terminated with LF; replies are LF-terminated.
   - SCPI commands from the R&S RTB2 user manual v14 (doc 1333.1611.02),
     Bode plot remote commands chapter 16.8.7. LAN usage follows the official
@@ -96,7 +100,11 @@ CMD_GET_SCREENSHOT       = "HCOPy:DATA?"      # screenshot as 488.2 block data
 REPLY_NO_ERROR     = "0,"             # SYSTem:ERRor? reply prefix when queue empty
 REPLY_BODE_STOP    = "STOP"           # BPLot:STATe? reply once the sweep finished
 OPTION_BODE        = "K36"            # Bode plot application option (RTB-K36)
-TIMEOUT_BODE_S     = 90.0            # max sweep time (low start freqs are slow)
+TIMEOUT_BODE_S     = 120              # max sweep time (low start freqs are slow).
+                                      # 200 Hz start, 50 points/decade = 185
+                                      # points measured approx 80s, keep
+                                      # plenty of headroom, as a trip here
+                                      # aborts a whole orchestrator run.
 TIMEOUT_DATA_S     = 10.0             # data arrays can be tens of kB of ASCII
 TIMEOUT_SCREEN_S   = 15.0             # screenshot PNG is tens of kB of binary
 POLL_BODE_S        = 1.0              # interval between sweep-state polls
@@ -528,9 +536,11 @@ def save_bode_csv(data: dict[str, list[float]], path: str = CSV_PATH) -> None:
 
 
 def close_connection() -> None:
+    global instrument
     if CONNECTION == CONNECTION_LAN:
         if instrument is not None:
             instrument.close()
+            instrument = None     # so a second call is a no-op, as for ser
             print(f"{LAN_RESOURCE} closed")
     else:
         if ser is not None and ser.is_open:
