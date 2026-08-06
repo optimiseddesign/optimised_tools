@@ -10,7 +10,7 @@ output 3 is 5.5V/3A or 12V/1.5A. The MX180T has no remote interfaces at all -
 only the MX180TP can be controlled.
 
 Connection:
-  - LAN, raw TCP sockets on port 9221 - the only remote control path the LAN
+  - LAN, a raw TCP socket on port 9221 - the only remote control path the LAN
     interface offers. The instrument is LXI Core 2011 compliant but implements
     just enough VXI-11 for discovery, so a VISA "TCPIP::<ip>::INSTR" resource
     name does not work; the manual specifies "TCPIP0::<ip>::9221::SOCKET"
@@ -21,18 +21,39 @@ Connection:
   - Set LAN_ADDRESS to the PSU's IP address, shown (and configured, DHCP or
     static) under Menu > Remote Control Interfaces on the instrument.
   - Commands are ASCII, case insensitive, terminated with LF; replies are
-    terminated with CR+LF. The instrument accepts two simultaneous control
-    sockets, so a second program does not block a run.
+    terminated with CR+LF.
+  - Only one control socket is accepted at a time, despite the manual's claim
+    of two, so a second program holding the port blocks a run - as the
+    compensation probe's COM port does. The socket is released immediately
+    on closing, an abrupt close included, so a repeat run is never locked out.
   - The instrument has no SCPI error queue (no SYSTem:ERRor?): a rejected
     command is reported in the Standard Event Status Register (*ESR?), with
     the reason in the Execution Error Register (EER?). Both are cleared when
     read, so each check starts from a clean register.
+  - A query the instrument does not recognise (e.g. "V9?") is answered with
+    nothing at all rather than with an error, so a mistyped query shows up
+    here as a read timeout, with the command error only visible afterwards.
+  - The interface lock is taken with IFLOCK, released with IFUNLOCK and read
+    with IFLOCK?, each replying with the resulting state: "1" if this
+    interface instance owns the lock, "0" if no interface does, "-1" if
+    another one does. They are therefore queries, not set commands. The
+    "IFLOCK <NRF>" form in the MX180T manual (issue 5, section 13.2.4) is not
+    what the firmware implements and is rejected as a syntax error; the older
+    TTi wording, as in the CPX400DP manual, matches the instrument.
+  - A session dropped without unlocking does not strand the lock: the next
+    connection on that socket inherits it, and the front panel LOCAL key
+    clears it. Taking the lock again is harmless, as is releasing it twice.
   - Any command puts the instrument into the remote state, which locks its
     keyboard, so close_connection() sends LOCAL to hand the front panel back.
+    LOCAL takes effect at once, without needing the socket closed. Note that
+    the error paths below exit without reaching close_connection(), so a run
+    that fails leaves the keyboard locked until the front panel LOCAL key is
+    pressed or another run completes.
   - Commands from the TTi MX180T & MX180TP instruction manual issue 5,
     Remote Commands chapter 13; LAN interface details from chapter 12.2.4.
 
 Requires: no external packages. Python 3.13.
+Tested against MX180TP firmware 1.09-1.00-1.09.
 
 Copyright Optimised Product Design Ltd 2026. Available for public use
 (copyright reserved) - see repository README; use at your own risk.
@@ -55,10 +76,12 @@ CMD_CLEAR_STATUS   = "*CLS"      # clear every status register
 CMD_GET_IDENTITY   = "*IDN?"     # manufacturer,model,serial,firmware
 CMD_GET_EVENT_STAT = "*ESR?"     # standard event status register, as an integer
 CMD_GET_EXEC_ERROR = "EER?"      # execution error register, as an integer
-CMD_LOCK_ON        = "IFLOCK 1"  # take exclusive control of the instrument
-CMD_LOCK_OFF       = "IFLOCK 0"  # release it
+CMD_LOCK_ON        = "IFLOCK"    # take exclusive control; replies with the state
+CMD_LOCK_OFF       = "IFUNLOCK"  # release it; replies with the state
 CMD_GO_LOCAL       = "LOCAL"     # unlock the front panel keyboard
 MODEL_EXPECTED     = "MX180TP"   # model field of the *IDN? reply
+REPLY_LOCK_OWNED   = "1"         # lock state: held by this interface instance
+                                 # ("0" = held by none, "-1" = by another)
 ESR_ERROR_BITS     = {           # *ESR? bits reporting a rejected command
     0x20: "command error (syntax)",
     0x10: "execution error",
@@ -78,17 +101,25 @@ sock = None
 
 
 def open_connection() -> None:
-    """Open the LAN socket and put the PSU in a known state."""
+    """Open the LAN socket and take exclusive control of the PSU."""
     lan_open()
     # Clear the status registers, including the power-on bit that would
     # otherwise be read as an error by the first scpi_set(). Deliberately no
     # *RST: the output settings on the PSU must be preserved.
     scpi_send(CMD_CLEAR_STATUS)
-    # Take exclusive control, as the manual recommends, so that another
-    # interface (the PSU's web page, USB, RS232 or GPIB) cannot change
-    # settings mid-run. Released by close_connection(), by the front panel
-    # LOCAL key, or when the PSU sees the socket close.
-    scpi_set(CMD_LOCK_ON)
+    # Lock the PSU's other interfaces (its web page, USB, RS232 and GPIB) out
+    # of changing settings mid-run; the LAN socket is exclusive by itself, they
+    # are not. IFLOCK replies with the resulting lock state instead of being a
+    # silent set command, so it is checked against that reply, not scpi_set().
+    state = scpi_query(CMD_LOCK_ON)
+    if state == REPLY_LOCK_OWNED:
+        return                    # lock taken, or already held by this socket
+    else:
+        # Either another interface holds it, or this one has been denied
+        # control from the PSU's web page (Configure > interface privileges)
+        print(f"Could not lock the PSU for exclusive control: "
+              f"{CMD_LOCK_ON} returned {state!r}")
+        sys.exit(1)
 
 
 def lan_open() -> None:
@@ -101,7 +132,8 @@ def lan_open() -> None:
                                         TIMEOUT_CONNECT_S)
     except OSError as exc:
         # Typical causes: PSU powered off or on another subnet, wrong
-        # LAN_ADDRESS, or both of its control sockets already in use.
+        # LAN_ADDRESS, or its one control socket already held by another
+        # program (the PSU refuses the connection outright).
         print(f"Could not connect to {LAN_ADDRESS}:{LAN_PORT}: {exc}")
         sys.exit(1)
 
@@ -202,15 +234,16 @@ def cmd_identify(print_results: bool = True) -> dict[str, str]:
 
 
 def close_connection() -> None:
+    global sock
     if sock is not None:
-        # Release the lock and hand the keyboard back: any command puts the
-        # instrument into the remote state, which locks its front panel until
-        # LOCAL is sent or its LOCAL key is pressed. Neither command is
-        # error-checked, as the check is itself a command and would put the
-        # instrument straight back into the remote state.
-        scpi_send(CMD_LOCK_OFF)
+        scpi_query(CMD_LOCK_OFF)  # reply is the resulting state, of no use here
+        # Hand the keyboard back: any command puts the instrument into the
+        # remote state, which locks its front panel until LOCAL is sent or its
+        # LOCAL key is pressed. Not error-checked, as the check is itself a
+        # command and would put the instrument straight back into remote.
         scpi_send(CMD_GO_LOCAL)
         sock.close()
+        sock = None               # so a second close is a no-op, not an error
         print(f"{LAN_ADDRESS}:{LAN_PORT} closed")
 
 
@@ -221,7 +254,7 @@ def main() -> None:
     # Confirm the power supply is alive and is the expected model
     cmd_identify()
 
-    # Done - release the interface lock and the socket
+    # Done - unlock, return the front panel to the user, release the socket
     close_connection()
 
 
