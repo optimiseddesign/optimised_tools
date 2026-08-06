@@ -2,9 +2,9 @@
 
 Orchestrates the two instrument drivers: control_compensation_probe.py sets
 resistance/capacitance on the AD EVAL-LTPA-COMPRB compensation probe, and
-control_rtb2004_scope.py runs a Bode plot sweep on the R&S RTB2004 and
-computes the stability margins. Connection settings (COM ports etc.) live in
-the drivers.
+control_oscilloscope_rtb2004.py runs a Bode plot sweep on the R&S RTB2004 and
+computes the stability margins. Connection settings (the probe's COM port,
+the scope's LAN address) live in the drivers.
 
 Outputs, all in a sub-folder named <timestamp>_bode_sweep_<TEST_DESCRIPTION_SHORT>
 and prefixed with the run's start timestamp:
@@ -21,11 +21,14 @@ An interrupted run therefore keeps every completed point on disk.
 
 Scope signal configuration (channels, generator amplitude, sweep range,
 points) is set up manually on the scope beforehand; the drivers never *RST.
-Both COM ports are exclusive on Windows - close LTPowerAnalyzer and any
-terminals before a run. An instrument failure currently aborts the run
-(the drivers exit on error); completed points remain on disk.
+Close LTPowerAnalyzer and any terminals before a run: the probe's COM port is
+exclusive on Windows, and the scope serves only one remote session at a time
+(a second one hangs until it times out rather than failing cleanly). An
+instrument failure currently aborts the run (the drivers exit on error);
+completed points remain on disk.
 
-Requires: pyserial (pip install pyserial). Python 3.13.
+Requires: pyserial for the probe, RsInstrument for the scope over LAN
+(pip install pyserial RsInstrument). Python 3.13.
 
 Copyright Optimised Product Design Ltd 2026. Available for public use
 (copyright reserved) - see repository README; use at your own risk.
@@ -38,15 +41,15 @@ import sys
 import time
 
 import control_compensation_probe as probe
-import control_rtb2004_scope as scope
+import control_oscilloscope_rtb2004 as scope
 
 # --- Sweep configuration ------------------------------------------------------
 # Manual note of the test circumstances, logged at the start of the run
-TEST_DESCRIPTION = ("PT136F 1.0 1A Charger with LTC4020 (plus Cff 100pF, VIN_REG Disabled, ILIMIT override disabled, VFBMAX 11k 47k for 14.5V) - Varying ITH, fixed VC 150pF 120k. At 9.5V In, 7A Out.")
+TEST_DESCRIPTION = ("PT136F 1.0 1A Charger with LTC4020 (plus Cff 100pF, VIN_REG Disabled, ILIMIT override disabled, VFBMAX 11k 47k for 14.5V) - Varying ITH, fixed VC 150pF 120k. At 9.5V In, 1.5A Out.")
 
 # Short version used to name the run's output folder (not the files in it);
 # use only characters legal in a folder name (no \ / : * ? " < > |)
-TEST_DESCRIPTION_SHORT = "9V5 In 7A Out - ITH vary with VC 150pF 120k"
+TEST_DESCRIPTION_SHORT = "9.5V In 1.5A Out - ITH vary with VC 150pF 120k"
 
 # Values to test, manually defined per run.
 # Outer loop is capacitance, inner resistance, matching the matrix CSV layout.
