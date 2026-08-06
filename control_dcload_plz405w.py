@@ -5,11 +5,11 @@ load level and input on/off - so a supply or converter under test can be
 loaded without touching the front panel.
 
 Covers connection, identification, operation mode, current/voltage range,
-the CC mode current setpoint, actual (measured) voltage/current, and input
-on/off - hardware-verified end to end at both 1 A and 5 A into a real supply.
-Running main() applies a real load to whatever is connected to the input
-terminals (default 1 A, CC mode); calling cmd_set_input(True) has that same
-effect from any other script.
+the current and voltage setpoints, actual (measured) voltage/current, and
+input enable - hardware-verified end to end, including a live loaded test at
+both 1 A and 5 A into a real supply. main()'s hardware test leaves the
+enable/disable calls commented out, so running this file never draws current
+on its own; calling cmd_set_input_enable(True) from another script does.
 
 Connection:
   - LAN (LXI): the PLZ-5W series is LXI compliant and accepts VXI-11, HiSLIP
@@ -67,6 +67,10 @@ CMD_SET_CURRENT  = "SOURce:CURRent"   # set the CC mode current level, A
 CMD_GET_CURRENT  = "SOURce:CURRent?"  # query the current setpoint, A - the
                                       # commanded level, not the measured load
                                       # current (that is MEASure:CURRent?)
+CMD_SET_VOLTAGE  = "SOURce:VOLTage"   # set the CV mode voltage level, V
+CMD_GET_VOLTAGE  = "SOURce:VOLTage?"  # query the voltage setpoint, V - the
+                                      # commanded level, not the measured load
+                                      # voltage (that is MEASure:VOLTage?)
 CMD_SET_MODE     = "SOURce:FUNCtion"  # set the operation mode
 CMD_GET_MODE     = "SOURce:FUNCtion?" # query the operation mode
 CMD_SET_CURRENT_RANGE = "SOURce:CURRent:RANGe"   # set the CC/CR/CP range
@@ -75,10 +79,13 @@ CMD_SET_VOLTAGE_RANGE = "SOURce:VOLTage:RANGe"   # set the CV range
 CMD_GET_VOLTAGE_RANGE = "SOURce:VOLTage:RANGe?"  # query the CV range
 CMD_MEASURE_VOLTAGE = "MEASure:VOLTage?"  # actual load terminal voltage, V
 CMD_MEASURE_CURRENT = "MEASure:CURRent?"  # actual load terminal current, A
-CMD_SET_INPUT    = "INPut"            # turn the load input on/off
-CMD_GET_INPUT    = "INPut?"           # query whether the load input is on
+CMD_SET_INPUT_ENABLE = "INPut"        # turn the load input on/off - enables/
+                                      # disables the load, drawing (or not)
+                                      # the set mode/range/level from the DUT
+CMD_GET_INPUT_ENABLE = "INPut?"       # query whether the load input is on
 REPLY_NO_ERROR   = 0                  # error code when the queue is empty
 CURRENT_TOLERANCE_A = 0.001           # allows for the load's 3 d.p. reply rounding
+VOLTAGE_TOLERANCE_V = 0.001           # allows for the load's 3 d.p. reply rounding
 IDENTITY_FIELDS  = 4                  # *IDN? reply has four comma-separated fields
 MODEL_EXPECTED   = "PLZ405W"          # the PLZ-5W series shares a command set but
                                       # not its ratings - refuse the wrong model
@@ -92,9 +99,18 @@ MODE_CP = "CP"                        # constant power
                                       # on the load but is out of scope here
 
 # --- Current/voltage ranges -------------------------------------------------
-RANGE_LOW  = "LOW"                    # all ranges
-RANGE_MED  = "MED"                    # CC/CR/CP current range only
-RANGE_HIGH = "HIGH"                   # all ranges
+# Each range is a coarse setting, not a specific number - it picks which of
+# the load's internal shunts is in circuit, trading maximum level for
+# resolution at the low end. Rated (specification) maximum for each range:
+#   current (CC/CR/CP): LOW = 0.8 A, MED = 8 A, HIGH = 80 A
+#   voltage (CV):        LOW = 15 V,             HIGH = 150 V (no MED)
+# The load actually accepts setpoints up to 5% over these (e.g. LOW current
+# up to 0.84 A, confirmed by bisecting the load's own accept/reject boundary
+# on this unit, serial VJ001122) - that headroom is calibration margin, not a
+# value to design a real test around.
+RANGE_LOW  = "LOW"                    # current: 0.8 A rated; voltage: 15 V rated
+RANGE_MED  = "MED"                    # current: 8 A rated (current axis only)
+RANGE_HIGH = "HIGH"                   # current: 80 A rated; voltage: 150 V rated
 
 # Single shared session objects (used by all functions); created by
 # open_connection(), both None until then
@@ -216,9 +232,9 @@ def cmd_identify(print_results: bool = True) -> dict[str, str]:
 def cmd_set_current(amps: float) -> float:
     """Set the CC mode current level, then read back the setpoint to confirm.
 
-    Only sets the level - the load's own operation mode and input on/off
+    Only sets the level - the load's own operation mode and input enable
     state are untouched, so this has no effect unless the load is already in
-    CC mode with the input on.
+    CC mode with the input enabled.
 
     Returns the confirmed setpoint as a float so other functions can use it.
     """
@@ -252,8 +268,51 @@ def cmd_get_current() -> float:
     return current_get_amps
 
 
+def cmd_set_voltage(volts: float) -> float:
+    """Set the CV mode voltage level, then read back the setpoint to confirm.
+
+    Only sets the level - the load's own operation mode and input enable
+    state are untouched, so this has no effect unless the load is already in
+    CV mode with the input enabled.
+
+    Returns the confirmed setpoint as a float so other functions can use it.
+    """
+    scpi_set(CMD_SET_VOLTAGE, f"{volts:.3f}")
+    print(f"Set voltage: {volts:.3f} V")
+
+    volts_get = cmd_get_voltage()
+
+    if abs(volts_get - volts) > VOLTAGE_TOLERANCE_V:
+        # Readback should match to the 3 d.p. sent; a real mismatch means the
+        # load silently clamped or ignored the value
+        print(f"Set voltage {volts:.3f} V but readback is {volts_get:.3f} V")
+        sys.exit(1)
+    else:
+        return volts_get
+
+
+def cmd_get_voltage() -> float:
+    """Query the CV mode voltage setpoint - the commanded level, not the
+    measured load voltage (that is cmd_measure_voltage()).
+
+    Returns the setpoint as a float so other functions can use it.
+    """
+    voltage_get = scpi_query(CMD_GET_VOLTAGE)
+    try:
+        voltage_get_v = float(voltage_get)
+    except ValueError:
+        print(f"Get voltage returned non-numeric readback: {voltage_get!r}")
+        sys.exit(1)
+    print(f"Get voltage: {voltage_get_v:.3f} V")
+    return voltage_get_v
+
+
 def cmd_set_mode(mode: str) -> str:
-    """Set the operation mode (MODE_CC/CR/CV/CP), then read it back to confirm.
+    """Set the operation mode, then read it back to confirm.
+
+    mode is one of the MODE_CC/CR/CV/CP constants above - each holds the
+    load's own two-letter code (e.g. MODE_CC == "CC"), which is what is
+    actually sent and returned, not the Python constant's name.
 
     Returns the confirmed mode as a string so other functions can use it.
     """
@@ -272,8 +331,8 @@ def cmd_set_mode(mode: str) -> str:
 def cmd_get_mode() -> str:
     """Query the operation mode.
 
-    Returns the mode as a string (one of MODE_CC/CR/CV/CP) so other
-    functions can use it.
+    Returns the load's own two-letter code as a string, e.g. "CC" - compare
+    against the MODE_CC/CR/CV/CP constants above, not their names.
     """
     mode_get = scpi_query(CMD_GET_MODE)
     print(f"Get mode: {mode_get}")
@@ -281,8 +340,11 @@ def cmd_get_mode() -> str:
 
 
 def cmd_set_current_range(range_: str) -> str:
-    """Set the CC/CR/CP mode current range (RANGE_LOW/MED/HIGH), then read it
-    back to confirm.
+    """Set the CC/CR/CP mode current range, then read it back to confirm.
+
+    range_ is one of the RANGE_LOW/MED/HIGH constants above (e.g. RANGE_LOW
+    == "LOW") - see the current/voltage max for each next to their
+    definitions.
 
     Returns the confirmed range as a string so other functions can use it.
     """
@@ -301,8 +363,8 @@ def cmd_set_current_range(range_: str) -> str:
 def cmd_get_current_range() -> str:
     """Query the CC/CR/CP mode current range.
 
-    Returns the range as a string (one of RANGE_LOW/MED/HIGH) so other
-    functions can use it.
+    Returns the load's own string, e.g. "LOW" - compare against the
+    RANGE_LOW/MED/HIGH constants above, not their names.
     """
     range_get = scpi_query(CMD_GET_CURRENT_RANGE)
     print(f"Get current range: {range_get}")
@@ -310,8 +372,10 @@ def cmd_get_current_range() -> str:
 
 
 def cmd_set_voltage_range(range_: str) -> str:
-    """Set the CV mode voltage range (RANGE_LOW/HIGH), then read it back to
-    confirm.
+    """Set the CV mode voltage range, then read it back to confirm.
+
+    range_ is RANGE_LOW or RANGE_HIGH (no RANGE_MED - see the current/voltage
+    max for each next to their definitions above).
 
     Returns the confirmed range as a string so other functions can use it.
     """
@@ -330,8 +394,8 @@ def cmd_set_voltage_range(range_: str) -> str:
 def cmd_get_voltage_range() -> str:
     """Query the CV mode voltage range.
 
-    Returns the range as a string (one of RANGE_LOW/HIGH) so other functions
-    can use it.
+    Returns the load's own string, e.g. "LOW" - compare against RANGE_LOW/
+    RANGE_HIGH above, not their names.
     """
     range_get = scpi_query(CMD_GET_VOLTAGE_RANGE)
     print(f"Get voltage range: {range_get}")
@@ -376,36 +440,36 @@ def cmd_measure_current() -> float:
     return current_a
 
 
-def cmd_set_input(on: bool) -> bool:
-    """Turn the load input on or off, then read it back to confirm.
+def cmd_set_input_enable(on: bool) -> bool:
+    """Enable or disable the load input, then read it back to confirm.
 
-    Turning the input on applies the current mode/range/level already set on
+    Enabling the input applies the current mode/range/level already set on
     the load to whatever is connected to its terminals - call this last, once
     those are all as intended.
 
     Returns the confirmed input state as a bool so other functions can use it.
     """
-    scpi_set(CMD_SET_INPUT, "1" if on else "0")
-    print(f"Set input: {'ON' if on else 'OFF'}")
+    scpi_set(CMD_SET_INPUT_ENABLE, "1" if on else "0")
+    print(f"Set input enable: {'ON' if on else 'OFF'}")
 
-    on_get = cmd_get_input()
+    on_get = cmd_get_input_enable()
 
     if on_get != on:
-        print(f"Set input {'ON' if on else 'OFF'} but readback is "
+        print(f"Set input enable {'ON' if on else 'OFF'} but readback is "
               f"{'ON' if on_get else 'OFF'}")
         sys.exit(1)
     else:
         return on_get
 
 
-def cmd_get_input() -> bool:
-    """Query whether the load input is on.
+def cmd_get_input_enable() -> bool:
+    """Query whether the load input is enabled (on).
 
     Returns the input state as a bool so other functions can use it.
     """
-    input_get = scpi_query(CMD_GET_INPUT)
+    input_get = scpi_query(CMD_GET_INPUT_ENABLE)
     on_get = input_get == "1"
-    print(f"Get input: {'ON' if on_get else 'OFF'}")
+    print(f"Get input enable: {'ON' if on_get else 'OFF'}")
     return on_get
 
 
@@ -438,20 +502,27 @@ def main() -> None:
     cmd_set_mode(MODE_CC)
     cmd_set_current_range(RANGE_MED)
 
-    # Set an example current level and confirm the readback
+    # Set example current and voltage setpoints and confirm the readback
+    # (voltage only takes effect in CV mode, so this is a setpoint check only
+    # while the load stays in CC mode from above)
     cmd_set_current(1.000)
+    cmd_set_voltage(5.000)
 
-    # Measure the terminal voltage/current with the input still off
+    # Measure the terminal voltage/current with the input still disabled
     cmd_measure_voltage()
     cmd_measure_current()
 
-    # Apply the load and confirm the measured current follows the setpoint
-    cmd_set_input(True)
-    cmd_measure_voltage()
-    cmd_measure_current()
+    # Enabling the input applies the setpoint above as a real load on
+    # whatever is connected to the input terminals - left commented out so
+    # running this file never draws current unintentionally. Uncomment to
+    # exercise the full enable/disable path (hardware-verified 2026-08-06 at
+    # both 1 A and 5 A: measured current tracked the setpoint to within 2 mA).
+    # cmd_set_input_enable(True)
+    # cmd_measure_voltage()
+    # cmd_measure_current()
+    # cmd_set_input_enable(False)
 
-    # Done loading - release the input before releasing the connection
-    cmd_set_input(False)
+    # Done - release the connection
     close_connection()
 
 
