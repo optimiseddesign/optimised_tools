@@ -105,19 +105,19 @@ ERROR_EXEC_TEXT    = {           # EER? codes, as returned, and their meaning
 # {output} is the output number. The PSU answers a number it does not have with
 # silence rather than an error, which would surface as a read timeout, so
 # check_output() rejects one before it is ever sent.
-OUTPUTS             = (1, 2, 3)
-CMD_SET_VOLTAGE     = "V{output}"        # argument in volts
-CMD_SET_CURRENT     = "I{output}"        # argument in amps
-CMD_SET_RANGE       = "VRANGE{output}"   # argument is a RANGE_LIMITS index
-CMD_SET_OUTPUT      = "OP{output}"       # argument switches the output
-ARG_OUTPUT_ON       = "1"                # OP<N> argument to switch on
-ARG_OUTPUT_OFF      = "0"                # and to switch off
-CMD_GET_VOLTAGE_SET = "V{output}?"       # reply "V<N> <volts>", the setpoint
-CMD_GET_CURRENT_SET = "I{output}?"       # reply "I<N> <amps>", the limit
-CMD_GET_VOLTAGE_OUT = "V{output}O?"      # reply "<volts>V", measured
-CMD_GET_CURRENT_OUT = "I{output}O?"      # reply "<amps>A", measured
-CMD_GET_RANGE       = "VRANGE{output}?"  # reply a RANGE_LIMITS index
-CMD_GET_OUTPUT_ON   = "OP{output}?"      # reply "1" on, "0" off
+OUTPUTS               = (1, 2, 3)
+CMD_SET_VOLTAGE       = "V{output}"        # argument in volts
+CMD_SET_CURRENT       = "I{output}"        # argument in amps
+CMD_SET_RANGE         = "VRANGE{output}"   # argument is a RANGE_LIMITS index
+CMD_SET_OUTPUT_ENABLE = "OP{output}"       # enable/disable the output
+ARG_OUTPUT_ENABLE     = "1"                # OP<N> argument to enable
+ARG_OUTPUT_DISABLE    = "0"                # and to disable
+CMD_GET_VOLTAGE_SET   = "V{output}?"       # reply "V<N> <volts>", the setpoint
+CMD_GET_CURRENT_SET   = "I{output}?"       # reply "I<N> <amps>", the limit
+CMD_GET_RANGE         = "VRANGE{output}?"  # reply a RANGE_LIMITS index
+CMD_GET_OUTPUT_ENABLE = "OP{output}?"      # reply "1" enabled, "0" disabled
+CMD_MEASURE_VOLTAGE   = "V{output}O?"      # reply "<volts>V", measured
+CMD_MEASURE_CURRENT   = "I{output}O?"      # reply "<amps>A", measured
 
 # Range index -> (maximum volts, maximum amps), per output. Output 1's ranges 4
 # to 7 reach 20 A or 120 V by borrowing output 2's hardware, so they are only
@@ -266,6 +266,20 @@ def check_output(output: int) -> None:
         sys.exit(1)
 
 
+def format_range(output: int, range_index: int) -> str:
+    """Render a range index with its limits, e.g. "1 (30 V / 6 A max)".
+
+    Shared by everything that prints a range, so the wording stays the same
+    whether it came from cmd_set_range(), cmd_get_range() or the combined
+    cmd_get_settings() line.
+    """
+    limits = RANGE_LIMITS[output].get(range_index)
+    if limits is None:
+        return str(range_index)   # a range this file does not have listed
+    else:
+        return f"{range_index} ({limits[0]:g} V / {limits[1]:g} A max)"
+
+
 def cmd_set_voltage(output: int, volts: float) -> None:
     """Set output <output>'s voltage setpoint.
 
@@ -308,77 +322,133 @@ def cmd_set_range(output: int, range_index: int) -> None:
     timeout rather than as the underlying error.
     """
     check_output(output)
-    if range_index in RANGE_LIMITS[output]:
-        max_volts, max_amps = RANGE_LIMITS[output][range_index]
-    else:
+    if range_index not in RANGE_LIMITS[output]:
         print(f"Output {output} has no range {range_index}: its ranges are "
               f"{', '.join(str(index) for index in RANGE_LIMITS[output])}")
         sys.exit(1)
 
     scpi_set(CMD_SET_RANGE.format(output=output), str(range_index))
-    print(f"Output {output} range set to {range_index}: "
-          f"{max_volts:g} V / {max_amps:g} A maximum")
+    print(f"Output {output} range set to {format_range(output, range_index)}")
     if output == 1 and range_index in RANGES_USING_OUTPUT2:
         print("  note: output 2 is unavailable until output 1 leaves this range")
 
 
-def cmd_set_output(output: int, on: bool) -> None:
-    """Switch output <output> on or off.
+def cmd_set_output_enable(output: int, on: bool) -> None:
+    """Enable or disable output <output>.
 
-    Switching on energises the terminals at once, with no ramp, at whatever
-    setpoints and range are already in force - so set those first. Switching
-    off leaves them untouched, ready to be switched on again. The manual's
-    OPALL, which switches all three outputs on a configurable delay sequence,
-    is deliberately not used: each output is switched explicitly here.
+    Enabling energises the terminals at once, with no ramp, at whatever
+    setpoints and range are already in force - so set those first. Disabling
+    leaves them untouched, ready to be enabled again. The manual's OPALL,
+    which switches all three outputs on a configurable delay sequence, is
+    deliberately not used: each output is switched explicitly here.
     """
     check_output(output)
-    scpi_set(CMD_SET_OUTPUT.format(output=output),
-             ARG_OUTPUT_ON if on else ARG_OUTPUT_OFF)
+    scpi_set(CMD_SET_OUTPUT_ENABLE.format(output=output),
+             ARG_OUTPUT_ENABLE if on else ARG_OUTPUT_DISABLE)
     print(f"Output {output} switched {'ON' if on else 'OFF'}")
 
 
 def cmd_get_settings(output: int,
-                     print_results: bool = True) -> dict[str, float]:
-    """Read what output <output> is set to, rather than what it is delivering.
+                     print_results: bool = True) -> dict[str, float | int | bool]:
+    """Read everything output <output> is set to, in one call.
 
-    Returns a dict so other functions can use the results, e.g.
-    cmd_get_settings(1, False)["voltage_set_v"]. The range index and the
-    on/off state are whole numbers carried as floats, keeping the dict
-    uniform; see RANGE_LIMITS for what a range index means.
+    Gathers what cmd_get_voltage(), cmd_get_current(), cmd_get_range() and
+    cmd_get_output_enable() each return, silencing their individual prints so
+    the lot appears as a single line. Returns a dict so other functions can use
+    the results, e.g. cmd_get_settings(1, False)["voltage_set_v"]; the values
+    keep the types those functions return.
     """
-    check_output(output)
     settings = {
-        "voltage_set_v": scpi_query_value(CMD_GET_VOLTAGE_SET.format(output=output)),
-        "current_set_a": scpi_query_value(CMD_GET_CURRENT_SET.format(output=output)),
-        "range":         scpi_query_value(CMD_GET_RANGE.format(output=output)),
-        "output_on":     scpi_query_value(CMD_GET_OUTPUT_ON.format(output=output))}
+        "voltage_set_v": cmd_get_voltage(output, False),
+        "current_set_a": cmd_get_current(output, False),
+        "range":         cmd_get_range(output, False),
+        "output_enable": cmd_get_output_enable(output, False)}
 
     if print_results:
-        print(f"Output {output} settings:")
-        print(f"  voltage set : {settings['voltage_set_v']:.3f} V")
-        print(f"  current set : {settings['current_set_a']:.3f} A")
-        print(f"  range       : {settings['range']:.0f}")
-        print(f"  output      : {'ON' if settings['output_on'] else 'OFF'}")
+        print(f"Output {output} set to {settings['voltage_set_v']:.3f} V, "
+              f"{settings['current_set_a']:.3f} A limit, range "
+              f"{format_range(output, settings['range'])}, "
+              f"{'ON' if settings['output_enable'] else 'OFF'}")
     return settings
 
 
-def cmd_get_readback(output: int,
-                     print_results: bool = True) -> dict[str, float]:
-    """Read what output <output> is actually delivering, as its meters show.
+def cmd_get_voltage(output: int, print_results: bool = True) -> float:
+    """Read output <output>'s voltage setpoint, in volts.
 
-    Returns a dict so other functions can use the results, e.g.
-    cmd_get_readback(1, False)["current_a"]. With the output off these read
-    close to zero rather than the setpoints.
+    This is what the output is set to, not what it is delivering - see
+    cmd_measure_voltage() for that. print_results is False when a caller is
+    gathering several values and will print them on one line itself.
     """
     check_output(output)
-    readback = {
-        "voltage_v": scpi_query_value(CMD_GET_VOLTAGE_OUT.format(output=output)),
-        "current_a": scpi_query_value(CMD_GET_CURRENT_OUT.format(output=output))}
-
+    volts = scpi_query_value(CMD_GET_VOLTAGE_SET.format(output=output))
     if print_results:
-        print(f"Output {output} readback: {readback['voltage_v']:.3f} V, "
-              f"{readback['current_a']:.3f} A")
-    return readback
+        print(f"Output {output} voltage setpoint: {volts:.3f} V")
+    return volts
+
+
+def cmd_get_current(output: int, print_results: bool = True) -> float:
+    """Read output <output>'s current limit, in amps.
+
+    The limit the output will hold at, not the current it is delivering - see
+    cmd_measure_current() for that.
+    """
+    check_output(output)
+    amps = scpi_query_value(CMD_GET_CURRENT_SET.format(output=output))
+    if print_results:
+        print(f"Output {output} current limit: {amps:.3f} A")
+    return amps
+
+
+def cmd_get_range(output: int, print_results: bool = True) -> int:
+    """Read output <output>'s range index; RANGE_LIMITS says what it allows."""
+    check_output(output)
+    range_index = int(scpi_query_value(CMD_GET_RANGE.format(output=output)))
+    if print_results:
+        print(f"Output {output} range: {format_range(output, range_index)}")
+    return range_index
+
+
+def cmd_get_output_enable(output: int, print_results: bool = True) -> bool:
+    """Query whether output <output> is enabled (on)."""
+    check_output(output)
+    on = bool(scpi_query_value(CMD_GET_OUTPUT_ENABLE.format(output=output)))
+    if print_results:
+        print(f"Output {output} state: {'ON' if on else 'OFF'}")
+    return on
+
+
+def cmd_measure_voltage(output: int, print_results: bool = True) -> float:
+    """Measure the voltage output <output> is delivering, as its meter shows.
+
+    Reads near zero with the output off, rather than the setpoint.
+    """
+    check_output(output)
+    volts = scpi_query_value(CMD_MEASURE_VOLTAGE.format(output=output))
+    if print_results:
+        print(f"Output {output} measured voltage: {volts:.3f} V")
+    return volts
+
+
+def cmd_measure_current(output: int, print_results: bool = True) -> float:
+    """Measure the current output <output> is delivering, as its meter shows."""
+    check_output(output)
+    amps = scpi_query_value(CMD_MEASURE_CURRENT.format(output=output))
+    if print_results:
+        print(f"Output {output} measured current: {amps:.3f} A")
+    return amps
+
+
+def available_outputs() -> tuple[int, ...]:
+    """The outputs that will answer, in order.
+
+    Output 2 stops responding while output 1 holds one of the high ranges that
+    borrow its hardware, and querying it would stall until the read timeout
+    and then abort, so it is left out while that is the case.
+    """
+    if cmd_get_range(1, False) in RANGES_USING_OUTPUT2:
+        return tuple(output for output in OUTPUTS if output != 2)
+    else:
+        return OUTPUTS
 
 
 def cmd_identify(print_results: bool = True) -> dict[str, str]:
@@ -428,19 +498,27 @@ def main() -> None:
     # Confirm the power supply is alive and is the expected model
     cmd_identify()
 
-    # Show what every output is set to and what it is delivering
-    for output in OUTPUTS:
+    # Show what every available output is set to and what it is delivering
+    for output in available_outputs():
         cmd_get_settings(output)
-        cmd_get_readback(output)
+        cmd_measure_voltage(output)
+        cmd_measure_current(output)
 
-    # Configure output 1 and confirm the PSU took the values. Switching it on
-    # is left out on purpose: running this file should not energise anything
-    # unattended - call cmd_set_output(1, True) for that.
-    cmd_set_range(1, 1)
-    cmd_set_voltage(1, 1.0)
-    cmd_set_current(1, 0.1)
-    cmd_set_output(1, False)
-    cmd_get_settings(1)
+    # Exercise the set path without disturbing a supply that is in use: write
+    # output 1's own setpoints straight back, so the commands and their status
+    # checks are proven end to end while the values stay as they were.
+    # Deliberately no range change (it would fail anyway with voltage still on
+    # the terminals) and no cmd_set_output_enable(), which would switch a live
+    # output off; call those directly when that is what you want.
+    settings = cmd_get_settings(1, False)
+    cmd_set_voltage(1, settings["voltage_set_v"])
+    cmd_set_current(1, settings["current_set_a"])
+
+    # The same values are readable one at a time, each printing its own line
+    cmd_get_voltage(1)
+    cmd_get_current(1)
+    cmd_get_range(1)
+    cmd_get_output_enable(1)
 
     # Done - unlock, return the front panel to the user, release the socket
     close_connection()
