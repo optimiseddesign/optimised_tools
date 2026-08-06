@@ -30,9 +30,14 @@ Connection:
     command is reported in the Standard Event Status Register (*ESR?), with
     the reason in the Execution Error Register (EER?). Both are cleared when
     read, so each check starts from a clean register.
-  - A query the instrument does not recognise (e.g. "V9?") is answered with
-    nothing at all rather than with an error, so a mistyped query shows up
-    here as a read timeout, with the command error only visible afterwards.
+  - A query the instrument will not answer - one it does not recognise, e.g.
+    "V9?", or one it refuses, e.g. any output 2 query while output 1 holds a
+    high range - is met with silence rather than an error, so it shows up here
+    as a read timeout. The reason is left in the status registers, which
+    scpi_query() neither reads nor clears; the next scpi_set() would therefore
+    report that stale error as its own. Harmless as the code stands, because a
+    query timeout exits the run, but it matters if error handling is ever
+    changed to continue past one.
   - The interface lock is taken with IFLOCK, released with IFUNLOCK and read
     with IFLOCK?, each replying with the resulting state: "1" if this
     interface instance owns the lock, "0" if no interface does, "-1" if
@@ -95,6 +100,34 @@ ERROR_EXEC_TEXT    = {           # EER? codes, as returned, and their meaning
     "103": "command invalid in the present circumstances",
     "104": "range change failed: >0.5 V still present on output 1 or 2",
     "200": "access denied: another interface holds the lock"}
+
+# --- Per-output commands ------------------------------------------------------
+# {output} is the output number. The PSU answers a number it does not have with
+# silence rather than an error, which would surface as a read timeout, so
+# check_output() rejects one before it is ever sent.
+OUTPUTS             = (1, 2, 3)
+CMD_SET_VOLTAGE     = "V{output}"        # argument in volts
+CMD_SET_CURRENT     = "I{output}"        # argument in amps
+CMD_SET_RANGE       = "VRANGE{output}"   # argument is a RANGE_LIMITS index
+CMD_SET_OUTPUT      = "OP{output}"       # argument switches the output
+ARG_OUTPUT_ON       = "1"                # OP<N> argument to switch on
+ARG_OUTPUT_OFF      = "0"                # and to switch off
+CMD_GET_VOLTAGE_SET = "V{output}?"       # reply "V<N> <volts>", the setpoint
+CMD_GET_CURRENT_SET = "I{output}?"       # reply "I<N> <amps>", the limit
+CMD_GET_VOLTAGE_OUT = "V{output}O?"      # reply "<volts>V", measured
+CMD_GET_CURRENT_OUT = "I{output}O?"      # reply "<amps>A", measured
+CMD_GET_RANGE       = "VRANGE{output}?"  # reply a RANGE_LIMITS index
+CMD_GET_OUTPUT_ON   = "OP{output}?"      # reply "1" on, "0" off
+
+# Range index -> (maximum volts, maximum amps), per output. Output 1's ranges 4
+# to 7 reach 20 A or 120 V by borrowing output 2's hardware, so they are only
+# available with output 2 disabled.
+RANGE_LIMITS = {
+    1: {1: (30.0, 6.0), 2: (15.0, 10.0), 3: (60.0, 3.0),
+        4: (30.0, 12.0), 5: (15.0, 20.0), 6: (60.0, 6.0), 7: (120.0, 3.0)},
+    2: {1: (30.0, 6.0), 2: (15.0, 10.0), 3: (60.0, 3.0)},
+    3: {1: (5.5, 3.0), 2: (12.0, 1.5)}}
+RANGES_USING_OUTPUT2 = (4, 5, 6, 7)  # output 1 ranges that consume output 2
 
 # Single shared socket (used by all functions); created by open_connection()
 sock = None
@@ -207,6 +240,147 @@ def scpi_set(command: str, argument: str = "") -> None:
         sys.exit(1)
 
 
+def scpi_query_value(command: str) -> float:
+    """Send a query with a numeric reply and return it as a float.
+
+    Numeric replies come in three shapes: "V1 13.500" (keyword then value),
+    "-0.008V" (value then unit) and "1" (value alone), so the last whitespace
+    field is taken and any unit letter dropped; print and exit on anything
+    that is not a number.
+    """
+    reply = scpi_query(command)
+    try:
+        return float(reply.split()[-1].rstrip("VA"))
+    except (ValueError, IndexError):
+        print(f"Reply to {command} was not numeric: {reply!r}")
+        sys.exit(1)
+
+
+def check_output(output: int) -> None:
+    """Reject an output the PSU does not have; print and exit if invalid."""
+    if output in OUTPUTS:
+        return
+    else:
+        print(f"Output {output} does not exist: this PSU has outputs "
+              f"{', '.join(str(number) for number in OUTPUTS)}")
+        sys.exit(1)
+
+
+def cmd_set_voltage(output: int, volts: float) -> None:
+    """Set output <output>'s voltage setpoint.
+
+    Takes effect whether the output is on or off. The PSU rounds to its own
+    resolution (1 mV on outputs 1 and 2, 10 mV on output 3) and rejects a
+    value above the output's present range with execution error 100, so raise
+    the range first where needed - see cmd_set_range(). The manual's "with
+    verify" form (V<N>V) is deliberately not used: it waits for the output to
+    reach the value, which never happens while the output is off.
+    """
+    check_output(output)
+    scpi_set(CMD_SET_VOLTAGE.format(output=output), f"{volts:.3f}")
+    print(f"Output {output} voltage set to {volts:.3f} V")
+
+
+def cmd_set_current(output: int, amps: float) -> None:
+    """Set output <output>'s current limit.
+
+    Rounded and range-checked by the PSU as cmd_set_voltage() describes; the
+    resolution is 1 mA on outputs 1 and 2, 10 mA on output 3.
+    """
+    check_output(output)
+    scpi_set(CMD_SET_CURRENT.format(output=output), f"{amps:.3f}")
+    print(f"Output {output} current limit set to {amps:.3f} A")
+
+
+def cmd_set_range(output: int, range_index: int) -> None:
+    """Set output <output>'s voltage/current range, as listed in RANGE_LIMITS.
+
+    A range change is refused with execution error 104 while more than 0.5 V
+    is still present on output 1 or 2, so switch an output off and let it
+    discharge before changing its range. Dropping to a lower range silently
+    clamps the setpoints to the new maximum rather than refusing - 10 V on
+    output 3 becomes 5.5 V - so set the range before the setpoints.
+
+    Output 1's high ranges (4 to 7, up to 20 A or 120 V) use output 2's
+    hardware and need output 2 off. While one of them is selected, output 2
+    stops responding: its commands are refused with execution error 103 and
+    its queries are answered with silence, so a query surfaces here as a read
+    timeout rather than as the underlying error.
+    """
+    check_output(output)
+    if range_index in RANGE_LIMITS[output]:
+        max_volts, max_amps = RANGE_LIMITS[output][range_index]
+    else:
+        print(f"Output {output} has no range {range_index}: its ranges are "
+              f"{', '.join(str(index) for index in RANGE_LIMITS[output])}")
+        sys.exit(1)
+
+    scpi_set(CMD_SET_RANGE.format(output=output), str(range_index))
+    print(f"Output {output} range set to {range_index}: "
+          f"{max_volts:g} V / {max_amps:g} A maximum")
+    if output == 1 and range_index in RANGES_USING_OUTPUT2:
+        print("  note: output 2 is unavailable until output 1 leaves this range")
+
+
+def cmd_set_output(output: int, on: bool) -> None:
+    """Switch output <output> on or off.
+
+    Switching on energises the terminals at once, with no ramp, at whatever
+    setpoints and range are already in force - so set those first. Switching
+    off leaves them untouched, ready to be switched on again. The manual's
+    OPALL, which switches all three outputs on a configurable delay sequence,
+    is deliberately not used: each output is switched explicitly here.
+    """
+    check_output(output)
+    scpi_set(CMD_SET_OUTPUT.format(output=output),
+             ARG_OUTPUT_ON if on else ARG_OUTPUT_OFF)
+    print(f"Output {output} switched {'ON' if on else 'OFF'}")
+
+
+def cmd_get_settings(output: int,
+                     print_results: bool = True) -> dict[str, float]:
+    """Read what output <output> is set to, rather than what it is delivering.
+
+    Returns a dict so other functions can use the results, e.g.
+    cmd_get_settings(1, False)["voltage_set_v"]. The range index and the
+    on/off state are whole numbers carried as floats, keeping the dict
+    uniform; see RANGE_LIMITS for what a range index means.
+    """
+    check_output(output)
+    settings = {
+        "voltage_set_v": scpi_query_value(CMD_GET_VOLTAGE_SET.format(output=output)),
+        "current_set_a": scpi_query_value(CMD_GET_CURRENT_SET.format(output=output)),
+        "range":         scpi_query_value(CMD_GET_RANGE.format(output=output)),
+        "output_on":     scpi_query_value(CMD_GET_OUTPUT_ON.format(output=output))}
+
+    if print_results:
+        print(f"Output {output} settings:")
+        print(f"  voltage set : {settings['voltage_set_v']:.3f} V")
+        print(f"  current set : {settings['current_set_a']:.3f} A")
+        print(f"  range       : {settings['range']:.0f}")
+        print(f"  output      : {'ON' if settings['output_on'] else 'OFF'}")
+    return settings
+
+
+def cmd_get_readback(output: int,
+                     print_results: bool = True) -> dict[str, float]:
+    """Read what output <output> is actually delivering, as its meters show.
+
+    Returns a dict so other functions can use the results, e.g.
+    cmd_get_readback(1, False)["current_a"]. With the output off these read
+    close to zero rather than the setpoints.
+    """
+    check_output(output)
+    readback = {
+        "voltage_v": scpi_query_value(CMD_GET_VOLTAGE_OUT.format(output=output)),
+        "current_a": scpi_query_value(CMD_GET_CURRENT_OUT.format(output=output))}
+
+    if print_results:
+        print(f"Output {output} readback: {readback['voltage_v']:.3f} V, "
+              f"{readback['current_a']:.3f} A")
+    return readback
+
+
 def cmd_identify(print_results: bool = True) -> dict[str, str]:
     """Identify the PSU (*IDN?) and check it is the expected model.
 
@@ -253,6 +427,20 @@ def main() -> None:
 
     # Confirm the power supply is alive and is the expected model
     cmd_identify()
+
+    # Show what every output is set to and what it is delivering
+    for output in OUTPUTS:
+        cmd_get_settings(output)
+        cmd_get_readback(output)
+
+    # Configure output 1 and confirm the PSU took the values. Switching it on
+    # is left out on purpose: running this file should not energise anything
+    # unattended - call cmd_set_output(1, True) for that.
+    cmd_set_range(1, 1)
+    cmd_set_voltage(1, 1.0)
+    cmd_set_current(1, 0.1)
+    cmd_set_output(1, False)
+    cmd_get_settings(1)
 
     # Done - unlock, return the front panel to the user, release the socket
     close_connection()
