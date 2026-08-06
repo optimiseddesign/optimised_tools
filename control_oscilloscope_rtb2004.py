@@ -1,4 +1,4 @@
-"""Control a Rohde & Schwarz RTB2004 oscilloscope over USB virtual COM port.
+"""Control a Rohde & Schwarz RTB2004 oscilloscope over LAN or USB virtual COM port.
 
 Drives the Bode plot application (option RTB-K36) remotely: start a sweep,
 wait for completion, fetch the frequency/gain/phase data, and compute gain
@@ -6,19 +6,31 @@ and phase margins. Signal configuration (input/output channels, generator
 amplitude, sweep range etc.) is assumed to be already set up on the scope.
 
 Connection:
-  - Scope set to USB VCP mode (Setup > Interface > USB > Parameter > USB VCP);
-    it appears as a virtual COM port carrying plain ASCII SCPI text.
-  - The same SCPI text works over LAN, so the transport can be swapped later
-    without touching the command functions: all instrument I/O is confined to
-    open_connection(), scpi_send(), scpi_query() and close_connection().
-    Planned LAN transport is the RsInstrument package, whose API maps 1:1
-    (write_str/query_str; resource "TCPIP::<ip>::5025::SOCKET" with
-    SelectVisa='SocketIo' needs no VISA install).
+  - The same SCPI text works over either transport, so all instrument I/O is
+    confined to open_connection(), close_connection(), scpi_send(),
+    scpi_query() and scpi_query_block(); the command functions and the margin
+    maths never see the transport. Set CONNECTION to choose - nothing else
+    changes between LAN and USB.
+  - LAN (default): the RsInstrument package talking raw socket to port 5025.
+    Its SelectVisa='socket' mode is a plain TCP implementation, so no VISA
+    installation is needed; with VISA installed, setting LAN_RESOURCE to
+    "TCPIP::<ip>::INSTR" and LAN_OPTIONS to "" switches to VXI-11 instead.
+    Set LAN_ADDRESS to the scope's IP address, shown (and configured, DHCP
+    or static) under Setup > Interface > Ethernet on the scope.
+  - USB VCP: scope set to USB VCP mode (Setup > Interface > USB > Parameter >
+    USB VCP); it appears as a virtual COM port carrying plain ASCII SCPI
+    text. COM ports are exclusive on Windows - a second program holding the
+    port blocks a run - whereas the scope accepts a LAN session even while
+    its front panel is in use.
   - Commands are ASCII lines terminated with LF; replies are LF-terminated.
   - SCPI commands from the R&S RTB2 user manual v14 (doc 1333.1611.02),
-    Bode plot remote commands chapter 16.8.7.
+    Bode plot remote commands chapter 16.8.7. LAN usage follows the official
+    R&S RsInstrument example for the RTB2000 (github.com/Rohde-Schwarz/
+    Examples, Oscilloscopes/Python/RsInstrument).
 
-Requires: pyserial (pip install pyserial). Python 3.13.
+Requires: RsInstrument for LAN, pyserial for USB VCP - only the selected
+transport's package is imported (pip install RsInstrument pyserial).
+Python 3.13.
 
 Copyright Optimised Product Design Ltd 2026. Available for public use
 (copyright reserved) - see repository README; use at your own risk.
@@ -29,18 +41,35 @@ import math
 import sys
 import time
 
-import serial
+# --- Connection configuration -------------------------------------------------
+CONNECTION_LAN  = "LAN"           # RsInstrument over Ethernet (see lan_open)
+CONNECTION_USB  = "USB"           # pyserial over the USB VCP (see vcp_open)
+CONNECTION      = CONNECTION_LAN  # transport this run uses - the only switch
+TIMEOUT_READ_S  = 2.0             # per-reply read timeout, either transport
 
-# --- Connection configuration -----------------------------------------------
+# LAN transport (RsInstrument)
+LAN_ADDRESS     = "192.168.1.100"  # scope IP: Setup > Interface > Ethernet
+LAN_RESOURCE    = f"TCPIP::{LAN_ADDRESS}::5025::SOCKET"  # raw socket port 5025
+LAN_OPTIONS     = "SelectVisa='socket'"  # RsInstrument's own TCP, no VISA needed
+LAN_MIN_VERSION = "1.53.0"        # RsInstrument release the calls below expect
+MS_PER_S        = 1000            # RsInstrument timeouts are in milliseconds
+
+# USB VCP transport (pyserial)
 COM_PORT        = "COM23"
 BAUD_RATE       = 115200          # VCP ignores UART settings, but set anyway
-DATA_BITS       = serial.EIGHTBITS
-PARITY          = serial.PARITY_NONE
-STOP_BITS       = serial.STOPBITS_ONE
-TIMEOUT_READ_S  = 2.0             # per-reply read timeout
+DATA_BITS       = 8               # serial.EIGHTBITS
+PARITY          = "N"             # serial.PARITY_NONE
+STOP_BITS       = 1               # serial.STOPBITS_ONE
 TIMEOUT_WRITE_S = 1.0
 TX_EOL          = b"\n"           # commands sent with bare LF
 RX_EOL          = b"\n"           # reply lines terminated with LF
+
+# Import only the selected transport's package, so a LAN-only machine needs no
+# pyserial and a USB-only machine needs no RsInstrument
+if CONNECTION == CONNECTION_LAN:
+    from RsInstrument import RsInstrument, RsInstrException
+else:
+    import serial
 
 # --- Protocol constants -------------------------------------------------------
 CMD_CLEAR_STATUS   = "*CLS"           # clear status registers and error queue
@@ -84,12 +113,57 @@ PHASE_CROSSOVER_DEG = 0.0             # instability point: positive reinforcemen
 PHASE_WRAP_STEP_DEG = 180.0           # larger steps between adjacent points are
                                       # the display wrapping, not crossings
 
-# Single shared port object (used by all functions)
-ser = serial.Serial()
+# Single shared session object for the transport in use (used by all
+# functions); created by open_connection(), the other stays None
+instrument = None                 # RsInstrument session, LAN
+ser = None                        # serial.Serial port, USB VCP
 
 
 def open_connection() -> None:
-    """Configure and open the COM port; print and exit on failure."""
+    """Open the configured connection and put the scope in a known state."""
+    if CONNECTION == CONNECTION_LAN:
+        lan_open()
+    else:
+        vcp_open()
+    # Clear the scope's status/error queue. Deliberately no *RST: the
+    # signal configuration on the scope must be preserved.
+    scpi_send(CMD_CLEAR_STATUS)
+    # Other software may leave data format as binary (REAL,32); pin it to
+    # ASCII so replies parse as text. Affects remote transfers only.
+    scpi_set(CMD_FORMAT_ASCII)
+
+
+def lan_open() -> None:
+    """Open the RsInstrument LAN session; print and exit on failure."""
+    global instrument
+    print(f"Opening Oscilloscope at {LAN_RESOURCE}")
+
+    try:
+        RsInstrument.assert_minimum_version(LAN_MIN_VERSION)
+        # id_query reads *IDN? to confirm the scope answers; reset stays off,
+        # as *RST would discard the signal configuration set up on the scope
+        instrument = RsInstrument(LAN_RESOURCE, id_query=True, reset=False,
+                                  options=LAN_OPTIONS)
+    except Exception as exc:
+        # Deliberately broad: opening a session raises three unrelated
+        # families - RsInstrException for a malformed resource string, a bare
+        # OSError (ConnectionRefusedError, TimeoutError) straight from the
+        # socket when the scope does not answer, and a plain Exception from
+        # assert_minimum_version. Typical causes: scope powered off or on
+        # another subnet, wrong LAN_ADDRESS, its LAN interface not yet up
+        # after a cold start, or RsInstrument too old.
+        print(f"Could not open {LAN_RESOURCE}: {exc}")
+        sys.exit(1)
+    # RsInstrument queries SYSTem:ERRor? after every write by default and
+    # raises on an error; this file checks the queue itself in scpi_set() and
+    # prints and exits instead, so switch the duplicate check off.
+    instrument.instrument_status_checking = False
+
+
+def vcp_open() -> None:
+    """Configure and open the USB virtual COM port; print and exit on failure."""
+    global ser
+    ser = serial.Serial()
     ser.port = COM_PORT
     ser.baudrate = BAUD_RATE
     ser.bytesize = DATA_BITS
@@ -108,33 +182,38 @@ def open_connection() -> None:
         print(f"Could not open {COM_PORT}: {exc}")
         sys.exit(1)
     ser.reset_input_buffer()      # purge stale bytes from a previous session
-    # Clear the scope's status/error queue too. Deliberately no *RST: the
-    # signal configuration on the scope must be preserved.
-    scpi_send(CMD_CLEAR_STATUS)
-    # Other software may leave data format as binary (REAL,32); pin it to
-    # ASCII so replies parse as text. Affects remote transfers only.
-    scpi_set(CMD_FORMAT_ASCII)
 
 
 def scpi_send(command: str) -> None:
     """Send a SCPI command that produces no reply."""
-    ser.write(command.encode("ascii") + TX_EOL)
+    if CONNECTION == CONNECTION_LAN:
+        instrument.write_str(command)
+    else:
+        ser.write(command.encode("ascii") + TX_EOL)
 
 
 def scpi_query(command: str, timeout_s: float = TIMEOUT_READ_S) -> str:
     """Send a SCPI query and return its one-line reply; print and exit on timeout.
 
     timeout_s allows slow queries (e.g. during a running Bode sweep) to wait
-    longer.
+    longer. It applies per query and is set on every call.
     """
-    ser.timeout = timeout_s       # applies per query; set on every call
-    scpi_send(command)
-    raw = ser.read_until(RX_EOL)  # returns whatever arrived on timeout
-    if raw.endswith(RX_EOL):
-        return raw.decode("ascii", errors="replace").strip()
+    if CONNECTION == CONNECTION_LAN:
+        instrument.visa_timeout = int(timeout_s * MS_PER_S)
+        try:
+            return instrument.query_str(command)  # reply trimmed of its LF
+        except RsInstrException as exc:
+            print(f"Scope did not reply to {command}: {exc}")
+            sys.exit(1)
     else:
-        print(f"Scope did not reply to {command}: got {raw!r}")
-        sys.exit(1)
+        ser.timeout = timeout_s
+        scpi_send(command)
+        raw = ser.read_until(RX_EOL)  # returns whatever arrived on timeout
+        if raw.endswith(RX_EOL):
+            return raw.decode("ascii", errors="replace").strip()
+        else:
+            print(f"Scope did not reply to {command}: got {raw!r}")
+            sys.exit(1)
 
 
 def scpi_query_block(command: str, timeout_s: float = TIMEOUT_READ_S) -> bytes:
@@ -144,25 +223,34 @@ def scpi_query_block(command: str, timeout_s: float = TIMEOUT_READ_S) -> bytes:
     byte count, then the raw bytes, then LF. Needed because binary data
     (e.g. a PNG screenshot) contains stray LF bytes that break the
     line-based scpi_query(); print and exit on a malformed or short reply.
+    RsInstrument parses the block itself, so the LAN branch is a single call.
     """
-    ser.timeout = timeout_s       # applies to each read below
-    scpi_send(command)
-    header = ser.read(2)          # b'#' then the digit count of the length
-    if not (header.startswith(b"#") and header[1:].isdigit()):
-        print(f"Scope did not return block data for {command}: got {header!r}")
-        sys.exit(1)
-    length = ser.read(int(header[1:]))
-    if not length.isdigit():
-        print(f"Bad block length for {command}: got {length!r}")
-        sys.exit(1)
-    payload = ser.read(int(length))
-    ser.read_until(RX_EOL)        # consume the trailing terminator
-    if len(payload) == int(length):
-        return payload
+    if CONNECTION == CONNECTION_LAN:
+        instrument.visa_timeout = int(timeout_s * MS_PER_S)
+        try:
+            return instrument.query_bin_block(command)
+        except RsInstrException as exc:
+            print(f"Scope did not return block data for {command}: {exc}")
+            sys.exit(1)
     else:
-        print(f"Block data for {command} incomplete: got {len(payload)} of "
-              f"{length.decode()} bytes")
-        sys.exit(1)
+        ser.timeout = timeout_s   # applies to each read below
+        scpi_send(command)
+        header = ser.read(2)      # b'#' then the digit count of the length
+        if not (header.startswith(b"#") and header[1:].isdigit()):
+            print(f"Scope did not return block data for {command}: got {header!r}")
+            sys.exit(1)
+        length = ser.read(int(header[1:]))
+        if not length.isdigit():
+            print(f"Bad block length for {command}: got {length!r}")
+            sys.exit(1)
+        payload = ser.read(int(length))
+        ser.read_until(RX_EOL)    # consume the trailing terminator
+        if len(payload) == int(length):
+            return payload
+        else:
+            print(f"Block data for {command} incomplete: got {len(payload)} of "
+                  f"{length.decode()} bytes")
+            sys.exit(1)
 
 
 def scpi_set(command: str, argument: str = "") -> None:
@@ -440,9 +528,14 @@ def save_bode_csv(data: dict[str, list[float]], path: str = CSV_PATH) -> None:
 
 
 def close_connection() -> None:
-    if ser.is_open:
-        ser.close()
-        print(f"{COM_PORT} closed")
+    if CONNECTION == CONNECTION_LAN:
+        if instrument is not None:
+            instrument.close()
+            print(f"{LAN_RESOURCE} closed")
+    else:
+        if ser is not None and ser.is_open:
+            ser.close()
+            print(f"{COM_PORT} closed")
 
 
 def main() -> None:
