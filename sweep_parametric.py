@@ -10,10 +10,10 @@ port, the other three instruments' LAN addresses) live in the drivers.
 
 The whole R/C sweep is repeated once per entry in OPERATING_POINTS, so one run
 covers what used to be one run per operating point. The PSU's voltage and
-current limit are set per operating point from the table beside
-OPERATING_POINTS; the load current, the on-off sequencing and the instrument
-ranges are still to come, so the load is set by hand and the supply's output
-is never switched.
+current limit and the load's current are set per operating point, from
+OPERATING_POINTS and the table beside it; the on-off sequencing and the
+instrument ranges are still to come, so the load's mode and both instruments'
+outputs are left as the bench has them.
 
 Outputs, all in a run folder named <timestamp>_bode_sweep <TEST_DESCRIPTION_SHORT>
 and prefixed with the run's start timestamp. Covering the whole run:
@@ -330,8 +330,10 @@ def run_sweep(operating_point: tuple[float, float], number: int) -> None:
 def set_operating_point(operating_point: tuple[float, float]) -> None:
     """Put the circuit at one operating point, ready to be swept.
 
-    Drives the supply only for now; the load current, the on-off sequencing
-    and the ranges follow. The setpoints apply whether the output is on or off.
+    Drives the supply and the load's level; the on-off sequencing and the
+    ranges follow. Every setpoint applies whether the output and input are on
+    or off. The load must already be in CC mode - changing mode needs its
+    input off, so that waits for the sequencing.
     """
     vin_v, iout_a = operating_point
     psu_output, psu_current_limit_a = OPERATING_POINT_SETTINGS[operating_point]
@@ -339,7 +341,7 @@ def set_operating_point(operating_point: tuple[float, float]) -> None:
     # Current limit before voltage, so the ceiling is set before it is needed
     psu.cmd_set_current(psu_output, psu_current_limit_a)
     psu.cmd_set_voltage(psu_output, vin_v)
-    print(f"Set the load to {iout_a:g} A by hand - not driven yet")
+    dcload.cmd_set_current(iout_a)
 
 
 def main() -> None:
