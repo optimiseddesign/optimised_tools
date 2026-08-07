@@ -1,8 +1,8 @@
 """Control a TTi MX180TP triple-output DC power supply over LAN.
 
-Sets output voltages, current limits and output on/off states remotely. This
-first version covers the connection and instrument identification only; the
-output commands follow.
+Sets output voltages, current limits, voltage/current ranges and output enable
+states remotely, and reads back both the setpoints and what each output is
+actually delivering.
 
 The three outputs are numbered 1 to 3: outputs 1 and 2 are 30V/6A, 15V/10A or
 60V/3A (output 1 has higher combined ranges available with output 2 disabled),
@@ -84,6 +84,7 @@ CMD_GET_EXEC_ERROR = "EER?"      # execution error register, as an integer
 CMD_LOCK_ON        = "IFLOCK"    # take exclusive control; replies with the state
 CMD_LOCK_OFF       = "IFUNLOCK"  # release it; replies with the state
 CMD_GO_LOCAL       = "LOCAL"     # unlock the front panel keyboard
+IDENTITY_FIELDS    = 4           # *IDN? reply has four comma-separated fields
 MODEL_EXPECTED     = "MX180TP"   # model field of the *IDN? reply
 REPLY_LOCK_OWNED   = "1"         # lock state: held by this interface instance
                                  # ("0" = held by none, "-1" = by another)
@@ -276,18 +277,30 @@ def check_output(output: int) -> None:
         sys.exit(1)
 
 
-def format_range(output: int, range_index: int) -> str:
-    """Render a range index with its limits, e.g. "1 (30 V / 6 A max)".
+def cmd_identify(print_results: bool = True) -> dict[str, str]:
+    """Identify the PSU (*IDN?) and check it is the expected model.
 
-    Shared by everything that prints a range, so the wording stays the same
-    whether it came from cmd_set_range(), cmd_get_range() or the combined
-    cmd_get_settings() line.
+    Returns a dict of strings so other functions can use the results.
     """
-    limits = RANGE_LIMITS[output].get(range_index)
-    if limits is None:
-        return str(range_index)   # a range this file does not have listed
+    identity = scpi_query(CMD_GET_IDENTITY)
+    fields = identity.split(",")
+    if len(fields) == IDENTITY_FIELDS:
+        keys = ("manufacturer", "model", "serial", "version_fw")
+        info = dict(zip(keys, (field.strip() for field in fields)))
     else:
-        return f"{range_index} ({limits[0]:g} V / {limits[1]:g} A max)"
+        print(f"Identify failed: unexpected reply {identity!r}")
+        sys.exit(1)
+
+    if info["model"] == MODEL_EXPECTED:
+        if print_results:
+            print("Power supply identification:")
+            for key, value in info.items():
+                print(f"  {key:<12}: {value}")
+    else:
+        print(f"Expected model {MODEL_EXPECTED} but found {info['model']!r}: "
+              f"its remote command set may differ")
+        sys.exit(1)
+    return info
 
 
 def cmd_set_voltage(output: int, volts: float) -> float:
@@ -315,6 +328,20 @@ def cmd_set_voltage(output: int, volts: float) -> float:
     return volts_get
 
 
+def cmd_get_voltage(output: int, print_results: bool = True) -> float:
+    """Read output <output>'s voltage setpoint, in volts.
+
+    This is what the output is set to, not what it is delivering - see
+    cmd_measure_voltage() for that. print_results is False when a caller is
+    gathering several values and will print them on one line itself.
+    """
+    check_output(output)
+    volts = scpi_query_value(CMD_GET_VOLTAGE_SET.format(output=output))
+    if print_results:
+        print(f"Output {output} voltage setpoint: {volts:.3f} V")
+    return volts
+
+
 def cmd_set_current(output: int, amps: float) -> float:
     """Set output <output>'s current limit, then read it back to confirm.
 
@@ -334,6 +361,33 @@ def cmd_set_current(output: int, amps: float) -> float:
               f"back {amps_get:.3f} A")
         sys.exit(1)
     return amps_get
+
+
+def cmd_get_current(output: int, print_results: bool = True) -> float:
+    """Read output <output>'s current limit, in amps.
+
+    The limit the output will hold at, not the current it is delivering - see
+    cmd_measure_current() for that.
+    """
+    check_output(output)
+    amps = scpi_query_value(CMD_GET_CURRENT_SET.format(output=output))
+    if print_results:
+        print(f"Output {output} current limit: {amps:.3f} A")
+    return amps
+
+
+def format_range(output: int, range_index: int) -> str:
+    """Render a range index with its limits, e.g. "1 (30 V / 6 A max)".
+
+    Shared by everything that prints a range, so the wording stays the same
+    whether it came from cmd_set_range(), cmd_get_range() or the combined
+    cmd_get_settings() line.
+    """
+    limits = RANGE_LIMITS[output].get(range_index)
+    if limits is None:
+        return str(range_index)   # a range this file does not have listed
+    else:
+        return f"{range_index} ({limits[0]:g} V / {limits[1]:g} A max)"
 
 
 def cmd_set_range(output: int, range_index: int) -> int:
@@ -373,6 +427,36 @@ def cmd_set_range(output: int, range_index: int) -> int:
     return index_get
 
 
+def cmd_get_range(output: int, print_results: bool = True) -> int:
+    """Read output <output>'s range index; RANGE_LIMITS says what it allows."""
+    check_output(output)
+    range_index = int(scpi_query_value(CMD_GET_RANGE.format(output=output)))
+    if print_results:
+        print(f"Output {output} range: {format_range(output, range_index)}")
+    return range_index
+
+
+def cmd_measure_voltage(output: int, print_results: bool = True) -> float:
+    """Measure the voltage output <output> is delivering, as its meter shows.
+
+    Reads near zero with the output off, rather than the setpoint.
+    """
+    check_output(output)
+    volts = scpi_query_value(CMD_MEASURE_VOLTAGE.format(output=output))
+    if print_results:
+        print(f"Output {output} measured voltage: {volts:.3f} V")
+    return volts
+
+
+def cmd_measure_current(output: int, print_results: bool = True) -> float:
+    """Measure the current output <output> is delivering, as its meter shows."""
+    check_output(output)
+    amps = scpi_query_value(CMD_MEASURE_CURRENT.format(output=output))
+    if print_results:
+        print(f"Output {output} measured current: {amps:.3f} A")
+    return amps
+
+
 def cmd_set_output_enable(output: int, on: bool) -> bool:
     """Enable or disable output <output>, then read it back to confirm.
 
@@ -396,6 +480,15 @@ def cmd_set_output_enable(output: int, on: bool) -> bool:
               f"back {'ON' if on_get else 'OFF'}")
         sys.exit(1)
     return on_get
+
+
+def cmd_get_output_enable(output: int, print_results: bool = True) -> bool:
+    """Query whether output <output> is enabled (on)."""
+    check_output(output)
+    on = bool(scpi_query_value(CMD_GET_OUTPUT_ENABLE.format(output=output)))
+    if print_results:
+        print(f"Output {output} state: {'ON' if on else 'OFF'}")
+    return on
 
 
 def cmd_get_settings(output: int,
@@ -422,72 +515,6 @@ def cmd_get_settings(output: int,
     return settings
 
 
-def cmd_get_voltage(output: int, print_results: bool = True) -> float:
-    """Read output <output>'s voltage setpoint, in volts.
-
-    This is what the output is set to, not what it is delivering - see
-    cmd_measure_voltage() for that. print_results is False when a caller is
-    gathering several values and will print them on one line itself.
-    """
-    check_output(output)
-    volts = scpi_query_value(CMD_GET_VOLTAGE_SET.format(output=output))
-    if print_results:
-        print(f"Output {output} voltage setpoint: {volts:.3f} V")
-    return volts
-
-
-def cmd_get_current(output: int, print_results: bool = True) -> float:
-    """Read output <output>'s current limit, in amps.
-
-    The limit the output will hold at, not the current it is delivering - see
-    cmd_measure_current() for that.
-    """
-    check_output(output)
-    amps = scpi_query_value(CMD_GET_CURRENT_SET.format(output=output))
-    if print_results:
-        print(f"Output {output} current limit: {amps:.3f} A")
-    return amps
-
-
-def cmd_get_range(output: int, print_results: bool = True) -> int:
-    """Read output <output>'s range index; RANGE_LIMITS says what it allows."""
-    check_output(output)
-    range_index = int(scpi_query_value(CMD_GET_RANGE.format(output=output)))
-    if print_results:
-        print(f"Output {output} range: {format_range(output, range_index)}")
-    return range_index
-
-
-def cmd_get_output_enable(output: int, print_results: bool = True) -> bool:
-    """Query whether output <output> is enabled (on)."""
-    check_output(output)
-    on = bool(scpi_query_value(CMD_GET_OUTPUT_ENABLE.format(output=output)))
-    if print_results:
-        print(f"Output {output} state: {'ON' if on else 'OFF'}")
-    return on
-
-
-def cmd_measure_voltage(output: int, print_results: bool = True) -> float:
-    """Measure the voltage output <output> is delivering, as its meter shows.
-
-    Reads near zero with the output off, rather than the setpoint.
-    """
-    check_output(output)
-    volts = scpi_query_value(CMD_MEASURE_VOLTAGE.format(output=output))
-    if print_results:
-        print(f"Output {output} measured voltage: {volts:.3f} V")
-    return volts
-
-
-def cmd_measure_current(output: int, print_results: bool = True) -> float:
-    """Measure the current output <output> is delivering, as its meter shows."""
-    check_output(output)
-    amps = scpi_query_value(CMD_MEASURE_CURRENT.format(output=output))
-    if print_results:
-        print(f"Output {output} measured current: {amps:.3f} A")
-    return amps
-
-
 def available_outputs() -> tuple[int, ...]:
     """The outputs that will answer, in order.
 
@@ -499,32 +526,6 @@ def available_outputs() -> tuple[int, ...]:
         return tuple(output for output in OUTPUTS if output != 2)
     else:
         return OUTPUTS
-
-
-def cmd_identify(print_results: bool = True) -> dict[str, str]:
-    """Identify the PSU (*IDN?) and check it is the expected model.
-
-    Returns a dict of strings so other functions can use the results.
-    """
-    identity = scpi_query(CMD_GET_IDENTITY)
-    fields = identity.split(",")
-    if len(fields) == 4:
-        keys = ("manufacturer", "model", "serial", "version_fw")
-        info = dict(zip(keys, (field.strip() for field in fields)))
-    else:
-        print(f"Identify failed: unexpected reply {identity!r}")
-        sys.exit(1)
-
-    if info["model"] == MODEL_EXPECTED:
-        if print_results:
-            print("Power supply identification:")
-            for key, value in info.items():
-                print(f"  {key:<12}: {value}")
-    else:
-        print(f"Expected model {MODEL_EXPECTED} but found {info['model']!r}: "
-              f"its remote command set may differ")
-        sys.exit(1)
-    return info
 
 
 def close_connection() -> None:
