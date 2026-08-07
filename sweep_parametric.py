@@ -11,9 +11,10 @@ port, the other three instruments' LAN addresses) live in the drivers.
 The whole R/C sweep is repeated once per entry in OPERATING_POINTS, so one run
 covers what used to be one run per operating point. The PSU's voltage and
 current limit and the load's current are set per operating point, from
-OPERATING_POINTS and the table beside it; the on-off sequencing and the
-instrument ranges are still to come, so the load's mode and both instruments'
-outputs are left as the bench has them.
+OPERATING_POINTS and the table beside it, with the circuit powered down over
+the change and back up afterwards, and the run always ends powered down. The
+instrument ranges are still to come, as is the load's mode, so the load has to
+be left in CC on the bench.
 
 Outputs, all in a run folder named <timestamp>_bode_sweep <TEST_DESCRIPTION_SHORT>
 and prefixed with the run's start timestamp. Covering the whole run:
@@ -84,9 +85,10 @@ OPERATING_POINTS = [
 # The instrument settings each operating point needs. The PSU and load ranges
 # join this table later.
 OPERATING_POINT_SETTINGS = {
-    # (vin_v, iout_a): (psu_output, psu_current_limit_a)
-    (9.5, 1.5): (1, 4.0),
+    # (vin_v, iout_a): settings
+    (9.5, 1.5): {"psu_output_num": 1, "psu_current_limit_a": 4.0},
 }
+TIME_SETTLE_S = 2.0                                # after each power step
 
 # --- Output configuration (run-level) -----------------------------------------
 # The run folder, its log, and the summary CSV. The summary spans the whole
@@ -124,6 +126,9 @@ MATRIX_CORNER          = "c_pf\\r_ohm"             # top-left axis-label cell
 # Margins of every completed point, keyed (capacitance pF, resistance ohm);
 # shared so the matrix CSVs can be rewritten in full after each point
 results: dict[tuple[int, int], dict[str, float | None]] = {}
+
+# The PSU output the circuit is powered from, so the run can take it down again
+psu_output_num: int | None = None
 
 
 class TeeStream(io.TextIOBase):
@@ -330,18 +335,30 @@ def run_sweep(operating_point: tuple[float, float], number: int) -> None:
 def set_operating_point(operating_point: tuple[float, float]) -> None:
     """Put the circuit at one operating point, ready to be swept.
 
-    Drives the supply and the load's level; the on-off sequencing and the
-    ranges follow. Every setpoint applies whether the output and input are on
-    or off. The load must already be in CC mode - changing mode needs its
-    input off, so that waits for the sequencing.
+    Powers down before changing anything and back up afterwards, so the
+    circuit never passes through a setpoint pair that is not an operating
+    point. The load must already be in CC mode; the ranges follow.
     """
+    global psu_output_num
     vin_v, iout_a = operating_point
-    psu_output, psu_current_limit_a = OPERATING_POINT_SETTINGS[operating_point]
+    settings = OPERATING_POINT_SETTINGS[operating_point]
+    psu_output_num = settings["psu_output_num"]
 
-    # Current limit before voltage, so the ceiling is set before it is needed
-    psu.cmd_set_current(psu_output, psu_current_limit_a)
-    psu.cmd_set_voltage(psu_output, vin_v)
+    # Power down, supply first, the load left on to drain the circuit
+    psu.cmd_set_output_enable(psu_output_num, False)
+    time.sleep(TIME_SETTLE_S)
+    dcload.cmd_set_input_enable(False)
+
+    # Set the PSU current limit, the PSU voltage, then the load current
+    psu.cmd_set_current(psu_output_num, settings["psu_current_limit_a"])
+    psu.cmd_set_voltage(psu_output_num, vin_v)
     dcload.cmd_set_current(iout_a)
+
+    # Power up, supply first, settling after each step
+    psu.cmd_set_output_enable(psu_output_num, True)
+    time.sleep(TIME_SETTLE_S)
+    dcload.cmd_set_input_enable(True)
+    time.sleep(TIME_SETTLE_S)
 
 
 def main() -> None:
@@ -371,6 +388,12 @@ def main() -> None:
         print(f"\nRun complete: "
               f"{len(OPERATING_POINTS)} operating point(s) swept")
     finally:
+        # Power down, supply first, the load left on to drain the circuit
+        if psu_output_num is not None:
+            psu.cmd_set_output_enable(psu_output_num, False)
+            time.sleep(TIME_SETTLE_S)
+            dcload.cmd_set_input_enable(False)
+
         # However the run ends - finished, Ctrl+C, or a driver's sys.exit(1)
         # on an instrument error - hand every instrument back
         close_instruments()
