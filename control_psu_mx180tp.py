@@ -250,20 +250,14 @@ def scpi_set(command: str, argument: str = "") -> None:
         command = command + " " + argument
     scpi_send(command)
 
-    status = scpi_query(CMD_GET_EVENT_STAT)
-    try:
-        bits = int(status)
-    except ValueError:
-        print(f"Status check after {command} returned non-numeric {status!r}")
-        sys.exit(1)
-
-    if not bits & ESR_ERROR_MASK:
+    status = int(scpi_query(CMD_GET_EVENT_STAT))
+    if not status & ESR_ERROR_MASK:
         return                    # command accepted
     else:
-        faults = [text for bit, text in ESR_ERROR_BITS.items() if bits & bit]
+        faults = [text for bit, text in ESR_ERROR_BITS.items() if status & bit]
         # The execution error bit says only that something failed; the reason
         # is a code held in the separate execution error register
-        if bits & ESR_BIT_EXEC_ERROR:
+        if status & ESR_BIT_EXEC_ERROR:
             code = scpi_query(CMD_GET_EXEC_ERROR)
             faults.append(f"EER {code} - "
                           f"{ERROR_EXEC_TEXT.get(code, 'unrecognised code')}")

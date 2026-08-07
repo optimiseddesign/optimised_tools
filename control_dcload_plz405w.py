@@ -25,6 +25,9 @@ Connection:
   - Unlike a COM port, the load's LAN interface is not exclusive: it accepts
     a second SCPI-RAW session alongside this one, so a run can be disturbed
     by another program talking to the load at the same time.
+  - The error paths below exit rather than return, so open_connection()
+    registers close_connection() with atexit: the session is released however
+    a run ends, an unhandled exception included.
   - All instrument I/O is confined to open_connection(), close_connection(),
     scpi_send(), scpi_query() and scpi_set(); the command functions never see
     the transport, so the USB or RS232C ports (both fitted as standard) can
@@ -39,6 +42,7 @@ Copyright Optimised Product Design Ltd 2026. Available for public use
 (copyright reserved) - see repository README; use at your own risk.
 """
 
+import atexit
 import sys
 
 import pyvisa
@@ -73,8 +77,10 @@ CMD_MEASURE_CURRENT = "MEASure:CURRent?"  # actual load terminal current, A
 CMD_SET_INPUT_ENABLE = "INPut"        # enable/disable the load input
 CMD_GET_INPUT_ENABLE = "INPut?"       # query whether the load input is enabled
 REPLY_NO_ERROR   = 0                  # error code when the queue is empty
-CURRENT_TOLERANCE_A = 0.001           # allows for the load's 3 d.p. reply rounding
-VOLTAGE_TOLERANCE_V = 0.001           # allows for the load's 3 d.p. reply rounding
+CURRENT_TOLERANCE_A = 0.002           # one whole step of the coarsest range -
+                                      # 2 mA (H), 0.2 mA (M), 0.02 mA (L); half
+                                      # a step lands on a float knife edge
+VOLTAGE_TOLERANCE_V = 0.005           # one whole step: 5 mV (H), 0.5 mV (L)
 IDENTITY_FIELDS  = 4                  # *IDN? reply has four comma-separated fields
 MODEL_EXPECTED   = "PLZ405W"          # the PLZ-5W series shares a command set but
                                       # not its ratings - refuse the wrong model
@@ -114,6 +120,10 @@ dcload = None                     # PyVISA session to the load
 def open_connection() -> None:
     """Open the LAN connection and put the load in a known state."""
     lan_open()
+    # Release the session however the run ends, error paths and unhandled
+    # exceptions included; close_connection() is idempotent, so the explicit
+    # call at the end of main() still works.
+    atexit.register(close_connection)
     # Clear the status/error queue - no *RST, since that would reset the
     # protection settings (OCP/OPP/UVP) and panel setup. Using scpi_set()
     # here also confirms the link works both ways before anything else runs.
@@ -464,6 +474,11 @@ def cmd_get_input_enable(print_results: bool = True) -> bool:
     Returns the input state as a bool so other functions can use it.
     """
     input_get = scpi_query(CMD_GET_INPUT_ENABLE)
+    if input_get not in ("0", "1"):
+        # Not treated as off: require_input_disabled() would then allow a
+        # mode/range change while the input is actually on
+        print(f"Get input enable returned unexpected reply: {input_get!r}")
+        sys.exit(1)
     on_get = input_get == "1"
     if print_results:
         print(f"Get input enable: {'ON' if on_get else 'OFF'}")
@@ -471,6 +486,7 @@ def cmd_get_input_enable(print_results: bool = True) -> bool:
 
 
 def close_connection() -> None:
+    global dcload
     # LOCal is a no-op over this raw-socket transport (no REN line to
     # assert REMote in the first place) but is kept for when LAN_RESOURCE
     # switches to VXI-11/HiSLIP, which do assert it.
@@ -480,6 +496,7 @@ def close_connection() -> None:
     if dcload is not None:
         scpi_send(CMD_SET_LOCAL)
         dcload.close()
+        dcload = None             # so a second close is a no-op, not an error
         print(f"{LAN_RESOURCE} closed")
 
 
@@ -491,8 +508,8 @@ def main() -> None:
     cmd_identify()
 
     # Query the load without setting anything
-    cmd_get_mode(MODE_CC)   
-    cmd_get_current_range(RANGE_MED)
+    cmd_get_mode()
+    cmd_get_current_range()
 
     # Get current and voltage setpoints
     cmd_get_current(True)

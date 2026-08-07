@@ -193,11 +193,18 @@ def vcp_open() -> None:
 
 
 def scpi_send(command: str) -> None:
-    """Send a SCPI command that produces no reply."""
-    if CONNECTION == CONNECTION_LAN:
-        instrument.write_str(command)
-    else:
-        ser.write(command.encode("ascii") + TX_EOL)
+    """Send a SCPI command that produces no reply; print and exit on failure."""
+    try:
+        if CONNECTION == CONNECTION_LAN:
+            instrument.write_str(command)
+        else:
+            ser.write(command.encode("ascii") + TX_EOL)
+    except Exception as exc:
+        # Broad, as in lan_open(): the transports raise unrelated families
+        # (RsInstrException or OSError on LAN, serial.SerialException on USB)
+        # and only the selected transport's package is imported
+        print(f"Could not send {command}: {exc}")
+        sys.exit(1)
 
 
 def scpi_query(command: str, timeout_s: float = TIMEOUT_READ_S) -> str:
@@ -210,7 +217,8 @@ def scpi_query(command: str, timeout_s: float = TIMEOUT_READ_S) -> str:
         instrument.visa_timeout = int(timeout_s * MS_PER_S)
         try:
             return instrument.query_str(command)  # reply trimmed of its LF
-        except RsInstrException as exc:
+        except (RsInstrException, OSError) as exc:
+            # OSError as well: a dropped link surfaces straight from the socket
             print(f"Scope did not reply to {command}: {exc}")
             sys.exit(1)
     else:
@@ -237,7 +245,7 @@ def scpi_query_block(command: str, timeout_s: float = TIMEOUT_READ_S) -> bytes:
         instrument.visa_timeout = int(timeout_s * MS_PER_S)
         try:
             return instrument.query_bin_block(command)
-        except RsInstrException as exc:
+        except (RsInstrException, OSError) as exc:
             print(f"Scope did not return block data for {command}: {exc}")
             sys.exit(1)
     else:
