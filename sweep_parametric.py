@@ -96,11 +96,13 @@ SUMMARY_COLUMNS  = ("timestamp",
 
 # --- Output configuration (per operating point) -------------------------------
 # Each operating point gets a sub-folder of the run folder holding its Bode
-# CSVs, screenshots and four matrix CSVs. {point_dir} is that sub-folder's
-# name, from format_operating_point(); {c} and {r} are the R/C point. So a
-# path reads <run>/9.5V in 1.5A out/<timestamp>_bode_c2200pf_r22000ohm.csv.
-OPERATING_POINT_DIR    = "{vin:g}V in {iout:g}A out"
-OPERATING_POINT_PREFIX = os.path.join(RUN_DIR, "{point_dir}", RUN_TIMESTAMP)
+# CSVs, screenshots and four matrix CSVs. {op_point_name} names both that
+# sub-folder and a part of every filename in it, so a file still says where
+# it came from once copied out; {c} and {r} are the R/C point - giving
+# 9V5in_1A5out/20260807_170116_9V5in_1A5out_bode_c2200pf_r22000ohm.csv.
+OPERATING_POINT_NAME   = "{vin}in_{iout}out"       # 9V5in_1A5out
+OPERATING_POINT_PREFIX = os.path.join(RUN_DIR, "{op_point_name}",
+                                      RUN_TIMESTAMP + "_{op_point_name}")
 CSV_BODE_NAME          = OPERATING_POINT_PREFIX + "_bode_c{c}pf_r{r}ohm.csv"
 PNG_BODE_NAME          = OPERATING_POINT_PREFIX + "_bode_c{c}pf_r{r}ohm.png"
 CSV_MATRIX_NAMES       = {                         # margin key -> matrix file
@@ -156,25 +158,37 @@ def open_log() -> None:
     print(f"Sweep resistances : {SWEEP_RESISTANCE_OHM} ohm")
     print(f"Sweep capacitances: {SWEEP_CAPACITANCE_PF} pF")
     print(f"Operating points  : "
-          + "; ".join(format_operating_point(operating_point)
+          + "; ".join(format_op_point(operating_point)
                       for operating_point in OPERATING_POINTS))
     print(f"\n")
 
 
-def format_operating_point(operating_point: tuple[float, float]) -> str:
-    """One operating point as text - "9.5V in 1.5A out".
+def format_r_notation(value: float, unit: str) -> str:
+    """A value with its unit letter where the decimal point would be - 9V5.
 
-    Used both as its output sub-folder's name and in the log, so a folder is
-    easy to match to the run it came from; :g keeps 30.0 as "30" and 9.5 as
-    "9.5", and the result has no character illegal in a folder name.
+    The bench's own convention (the earlier runs' folders were named "9V5 In
+    7A Out"), and it keeps decimal points out of the names: 9.5 V is "9V5",
+    30 V is "30V", 0.35 A is "0A35".
+    """
+    text = f"{value:g}"
+    return text.replace(".", unit) if "." in text else text + unit
+
+
+def format_op_point(operating_point: tuple[float, float]) -> str:
+    """One operating point as text - "9V5in_1A5out".
+
+    Names both its output sub-folder and the operating point part of every
+    filename in it, so a file always matches the folder it belongs in. Also
+    used in the log, so a folder is easy to match to the run it came from.
     """
     vin_v, iout_a = operating_point
-    return OPERATING_POINT_DIR.format(vin=vin_v, iout=iout_a)
+    return OPERATING_POINT_NAME.format(vin=format_r_notation(vin_v, "V"),
+                                       iout=format_r_notation(iout_a, "A"))
 
 
-def open_operating_point_dir(operating_point_dir: str) -> None:
+def open_operating_point_dir(op_point_name: str) -> None:
     """Create one operating point's output sub-folder."""
-    path = os.path.join(RUN_DIR, operating_point_dir)
+    path = os.path.join(RUN_DIR, op_point_name)
     try:
         os.makedirs(path, exist_ok=True)
     except OSError as exc:
@@ -236,7 +250,7 @@ def append_summary_row(operating_point: tuple[float, float],
     print(f"Summary row appended to {CSV_SUMMARY_NAME}")
 
 
-def write_matrix_csvs(operating_point_dir: str) -> None:
+def write_matrix_csvs(op_point_name: str) -> None:
     """Rewrite the four margin matrix CSVs from all points measured so far.
 
     A matrix row is only complete once every resistance for that capacitance
@@ -247,7 +261,7 @@ def write_matrix_csvs(operating_point_dir: str) -> None:
     live in that operating point's sub-folder.
     """
     for key, name in CSV_MATRIX_NAMES.items():
-        path = name.format(point_dir=operating_point_dir)
+        path = name.format(op_point_name=op_point_name)
         try:
             with open(path, "w", newline="") as file:
                 writer = csv.writer(file)
@@ -262,14 +276,14 @@ def write_matrix_csvs(operating_point_dir: str) -> None:
             print(f"Could not write {path}: {exc}")
             sys.exit(1)
     print("Matrix CSVs updated: "
-          + ", ".join(name.format(point_dir=operating_point_dir)
+          + ", ".join(name.format(op_point_name=op_point_name)
                       for name in CSV_MATRIX_NAMES.values()))
 
 
 def measure_point(operating_point: tuple[float, float],
                   r_ohm: int, c_pf: int) -> None:
     """Measure one R/C point and record it in every output CSV."""
-    operating_point_dir = format_operating_point(operating_point)
+    op_point_name = format_op_point(operating_point)
     probe.cmd_set_resistance(r_ohm)
     probe.cmd_set_capacitance(c_pf)
     config = probe.cmd_get_configuration(False)
@@ -282,14 +296,14 @@ def measure_point(operating_point: tuple[float, float],
     scope.cmd_bode_set_markers(margins["gain_crossover_hz"],
                                margins["phase_crossover_hz"])
     scope.cmd_save_screenshot(
-        PNG_BODE_NAME.format(point_dir=operating_point_dir, r=r_ohm, c=c_pf))
+        PNG_BODE_NAME.format(op_point_name=op_point_name, r=r_ohm, c=c_pf))
     scope.save_bode_csv(
-        data, CSV_BODE_NAME.format(point_dir=operating_point_dir,
+        data, CSV_BODE_NAME.format(op_point_name=op_point_name,
                                    r=r_ohm, c=c_pf))
 
     append_summary_row(operating_point, r_ohm, c_pf, config, margins)
     results[(c_pf, r_ohm)] = margins
-    write_matrix_csvs(operating_point_dir)
+    write_matrix_csvs(op_point_name)
 
 
 def run_sweep(operating_point: tuple[float, float], number: int) -> None:
@@ -310,7 +324,7 @@ def set_operating_point(operating_point: tuple[float, float]) -> None:
     Prints the point only for now; the PSU and load setpoints, their ranges
     and the output/input on-off sequencing are added a step at a time.
     """
-    print(f"Set the supply and load to {format_operating_point(operating_point)}"
+    print(f"Set the supply and load to {format_op_point(operating_point)}"
           f" (still by hand - this script does not drive them yet)")
 
 
@@ -324,16 +338,16 @@ def main() -> None:
 
         # Run the whole R/C sweep once at each operating point
         for number, operating_point in enumerate(OPERATING_POINTS, start=1):
-            operating_point_dir = format_operating_point(operating_point)
+            op_point_name = format_op_point(operating_point)
             print(f"\n=== Operating point {number} of "
-                  f"{len(OPERATING_POINTS)}: {operating_point_dir} ===")
+                  f"{len(OPERATING_POINTS)}: {op_point_name} ===")
 
             set_operating_point(operating_point)
 
             # Its own sub-folder, and its own margins: the matrix CSVs and the
             # "point N of M" count cover one operating point, while the summary
             # CSV is appended to and keeps every point of the whole run
-            open_operating_point_dir(operating_point_dir)
+            open_operating_point_dir(op_point_name)
             results.clear()
 
             run_sweep(operating_point, number)
