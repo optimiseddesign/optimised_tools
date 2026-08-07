@@ -1,10 +1,16 @@
 """Sweep R/C compensation values and measure loop stability at each point.
 
-Orchestrates the two instrument drivers: control_compensation_probe.py sets
-resistance/capacitance on the AD EVAL-LTPA-COMPRB compensation probe, and
+Orchestrates four instrument drivers: control_compensation_probe.py sets
+resistance/capacitance on the AD EVAL-LTPA-COMPRB compensation probe,
 control_oscilloscope_rtb2004.py runs a Bode plot sweep on the R&S RTB2004 and
-computes the stability margins. Connection settings (the probe's COM port,
-the scope's LAN address) live in the drivers.
+computes the stability margins, and control_psu_mx180tp.py (TTi MX180TP) and
+control_dcload_plz405w.py (Kikusui PLZ405W) supply and load the circuit at the
+operating point the sweep is measured at. Connection settings (the probe's COM
+port, the other three instruments' LAN addresses) live in the drivers.
+
+The PSU and the load are opened and identified but not yet commanded: the
+operating point is still set by hand on the bench, and driving it is being
+added a step at a time.
 
 Outputs, all in a sub-folder named <timestamp>_bode_sweep_<TEST_DESCRIPTION_SHORT>
 and prefixed with the run's start timestamp:
@@ -22,13 +28,15 @@ An interrupted run therefore keeps every completed point on disk.
 Scope signal configuration (channels, generator amplitude, sweep range,
 points) is set up manually on the scope beforehand; the drivers never *RST.
 Close LTPowerAnalyzer and any terminals before a run: the probe's COM port is
-exclusive on Windows, and the scope serves only one remote session at a time
-(a second one hangs until it times out rather than failing cleanly). An
-instrument failure currently aborts the run (the drivers exit on error);
-completed points remain on disk.
+exclusive on Windows, the scope serves only one remote session at a time (a
+second one hangs until it times out rather than failing cleanly), and the PSU
+accepts one control socket. An instrument failure aborts the run (the drivers
+exit on error), but every completed point remains on disk and every instrument
+is released on the way out.
 
-Requires: pyserial for the probe, RsInstrument for the scope over LAN
-(pip install pyserial RsInstrument). Python 3.13.
+Requires: pyserial for the probe, RsInstrument for the scope, PyVISA and
+pyvisa-py for the DC load; the PSU needs nothing beyond the standard library
+(pip install pyserial RsInstrument pyvisa pyvisa-py). Python 3.13.
 
 Copyright Optimised Product Design Ltd 2026. Available for public use
 (copyright reserved) - see repository README; use at your own risk.
@@ -41,7 +49,9 @@ import sys
 import time
 
 import control_compensation_probe as probe
+import control_dcload_plz405w as dcload
 import control_oscilloscope_rtb2004 as scope
+import control_psu_mx180tp as psu
 
 # --- Sweep configuration ------------------------------------------------------
 # Manual note of the test circumstances, logged at the start of the run
@@ -125,16 +135,29 @@ def open_log() -> None:
 
 
 def open_instruments() -> None:
-    """Open both COM ports and confirm both instruments are alive."""
+    """Open every instrument connection and confirm each instrument is alive."""
     probe.open_port()
     probe.cmd_status_update()
     scope.open_connection()
     scope.cmd_identify()
+    psu.open_connection()
+    psu.cmd_identify()
+    dcload.open_connection()
+    dcload.cmd_identify()
 
 
 def close_instruments() -> None:
+    """Release every instrument connection.
+
+    Each driver's close is a no-op on an instrument it never opened, so this
+    can be called however far into the run things got - including from a
+    driver's own sys.exit(1), which raises SystemExit and so still unwinds
+    through main()'s finally.
+    """
     probe.close_port()
     scope.close_connection()
+    psu.close_connection()
+    dcload.close_connection()
 
 
 def append_summary_row(r_ohm: int, c_pf: int,
@@ -224,14 +247,16 @@ def main() -> None:
     # Start the run log and record the test circumstances
     open_log()
 
-    # Connect to the probe and the scope, and confirm both are alive
-    open_instruments()
+    try:
+        # Connect to all four instruments and confirm each one is alive
+        open_instruments()
 
-    # Measure every R/C combination, recording results as each completes
-    run_sweep()
-
-    # Done - release both ports
-    close_instruments()
+        # Measure every R/C combination, recording results as each completes
+        run_sweep()
+    finally:
+        # However the run ends - finished, Ctrl+C, or a driver's sys.exit(1)
+        # on an instrument error - hand every instrument back
+        close_instruments()
 
 
 if __name__ == "__main__":
