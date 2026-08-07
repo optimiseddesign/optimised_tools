@@ -9,9 +9,11 @@ operating point the sweep is measured at. Connection settings (the probe's COM
 port, the other three instruments' LAN addresses) live in the drivers.
 
 The whole R/C sweep is repeated once per entry in OPERATING_POINTS, so one run
-covers what used to be one run per operating point. The PSU and the load are
-opened and identified but not yet commanded: the operating point itself is
-still set by hand on the bench, and driving it is being added a step at a time.
+covers what used to be one run per operating point. The PSU's voltage and
+current limit are set per operating point from the table beside
+OPERATING_POINTS; the load current, the on-off sequencing and the instrument
+ranges are still to come, so the load is set by hand and the supply's output
+is never switched.
 
 Outputs, all in a run folder named <timestamp>_bode_sweep <TEST_DESCRIPTION_SHORT>
 and prefixed with the run's start timestamp. Covering the whole run:
@@ -78,6 +80,13 @@ SWEEP_CAPACITANCE_PF = [2200, 2700, 3300, 3900, 4700, 5600, 6800, 8200, 10000]
 OPERATING_POINTS = [
     (9.5, 1.5),
 ]
+
+# The instrument settings each operating point needs. The PSU and load ranges
+# join this table later.
+OPERATING_POINT_SETTINGS = {
+    # (vin_v, iout_a): (psu_output, psu_current_limit_a)
+    (9.5, 1.5): (1, 4.0),
+}
 
 # --- Output configuration (run-level) -----------------------------------------
 # The run folder, its log, and the summary CSV. The summary spans the whole
@@ -321,11 +330,16 @@ def run_sweep(operating_point: tuple[float, float], number: int) -> None:
 def set_operating_point(operating_point: tuple[float, float]) -> None:
     """Put the circuit at one operating point, ready to be swept.
 
-    Prints the point only for now; the PSU and load setpoints, their ranges
-    and the output/input on-off sequencing are added a step at a time.
+    Drives the supply only for now; the load current, the on-off sequencing
+    and the ranges follow. The setpoints apply whether the output is on or off.
     """
-    print(f"Set the supply and load to {format_op_point(operating_point)}"
-          f" (still by hand - this script does not drive them yet)")
+    vin_v, iout_a = operating_point
+    psu_output, psu_current_limit_a = OPERATING_POINT_SETTINGS[operating_point]
+
+    # Current limit before voltage, so the ceiling is set before it is needed
+    psu.cmd_set_current(psu_output, psu_current_limit_a)
+    psu.cmd_set_voltage(psu_output, vin_v)
+    print(f"Set the load to {iout_a:g} A by hand - not driven yet")
 
 
 def main() -> None:
