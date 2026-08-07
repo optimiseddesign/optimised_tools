@@ -87,14 +87,12 @@ CMD_BODE_GET_STATE = "BPLot:STATe?"   # sweep state: RUN or STOP
 CMD_BODE_GET_FREQ  = "BPLot:FREQuency:DATA?"  # comma-separated frequencies, Hz
 CMD_BODE_GET_GAIN  = "BPLot:GAIN:DATA?"       # comma-separated gain values, dB
 CMD_BODE_GET_PHASE = "BPLot:PHASe:DATA?"      # comma-separated phase values, deg
-CMD_BODE_MARKER1_FREQ    = "BPLot:MARKer1:FREQuency"   # set marker position, Hz
-CMD_BODE_MARKER2_FREQ    = "BPLot:MARKer2:FREQuency"   # (snaps to nearest sample)
-CMD_BODE_GET_MARK1_FREQ  = "BPLot:MARKer1:FREQuency?"  # actual (snapped) position
-CMD_BODE_GET_MARK2_FREQ  = "BPLot:MARKer2:FREQuency?"
-CMD_BODE_GET_MARK1_GAIN  = "BPLot:MARKer1:GAIN?"       # gain at marker, dB
-CMD_BODE_GET_MARK2_GAIN  = "BPLot:MARKer2:GAIN?"
-CMD_BODE_GET_MARK1_PHASE = "BPLot:MARKer1:PHASe?"      # phase at marker, deg
-CMD_BODE_GET_MARK2_PHASE = "BPLot:MARKer2:PHASe?"
+# Marker commands; {n} is the marker number, 1 or 2
+CMD_BODE_MARKER_FREQ     = "BPLot:MARKer{n}:FREQuency"   # set position, Hz
+                                                         # (snaps to a sample)
+CMD_BODE_GET_MARK_FREQ   = "BPLot:MARKer{n}:FREQuency?"  # actual (snapped) one
+CMD_BODE_GET_MARK_GAIN   = "BPLot:MARKer{n}:GAIN?"       # gain at marker, dB
+CMD_BODE_GET_MARK_PHASE  = "BPLot:MARKer{n}:PHASe?"      # phase at marker, deg
 CMD_SCREENSHOT_FORMAT    = "HCOPy:LANGuage PNG"  # screenshot image format
 CMD_GET_SCREENSHOT       = "HCOPy:DATA?"      # screenshot as 488.2 block data
 REPLY_NO_ERROR     = 0                # error code when the queue is empty
@@ -289,6 +287,20 @@ def scpi_set(command: str, argument: str = "") -> None:
         return                    # command accepted
     else:
         print(f"Command {command} failed: {error}")
+        sys.exit(1)
+
+
+def scpi_query_value(command: str) -> float:
+    """Send a query with a numeric reply and return it as a float.
+
+    Replies are plain numbers, e.g. "1.2345E+03"; print and exit on anything
+    else.
+    """
+    reply = scpi_query(command)
+    try:
+        return float(reply)
+    except ValueError:
+        print(f"Reply to {command} was not numeric: {reply!r}")
         sys.exit(1)
 
 
@@ -513,18 +525,15 @@ def cmd_bode_set_markers(marker1_hz: float | None,
     snapped position and its gain/phase are read back and printed. Pass None
     to leave a marker untouched (e.g. when a crossover was not found).
     """
-    if marker1_hz is not None:
-        scpi_set(CMD_BODE_MARKER1_FREQ, str(marker1_hz))
-        actual_hz = scpi_query(CMD_BODE_GET_MARK1_FREQ)
-        gain = scpi_query(CMD_BODE_GET_MARK1_GAIN)
-        phase = scpi_query(CMD_BODE_GET_MARK1_PHASE)
-        print(f"Marker 1 at {actual_hz} Hz: gain {gain} dB, phase {phase} deg")
-    if marker2_hz is not None:
-        scpi_set(CMD_BODE_MARKER2_FREQ, str(marker2_hz))
-        actual_hz = scpi_query(CMD_BODE_GET_MARK2_FREQ)
-        gain = scpi_query(CMD_BODE_GET_MARK2_GAIN)
-        phase = scpi_query(CMD_BODE_GET_MARK2_PHASE)
-        print(f"Marker 2 at {actual_hz} Hz: gain {gain} dB, phase {phase} deg")
+    for number, marker_hz in enumerate((marker1_hz, marker2_hz), start=1):
+        if marker_hz is None:
+            continue
+        scpi_set(CMD_BODE_MARKER_FREQ.format(n=number), str(marker_hz))
+        actual_hz = scpi_query_value(CMD_BODE_GET_MARK_FREQ.format(n=number))
+        gain = scpi_query_value(CMD_BODE_GET_MARK_GAIN.format(n=number))
+        phase = scpi_query_value(CMD_BODE_GET_MARK_PHASE.format(n=number))
+        print(f"Marker {number} at {actual_hz:.6g} Hz: "
+              f"gain {gain:.1f} dB, phase {phase:.1f} deg")
 
 
 def cmd_save_screenshot(path: str = SCREENSHOT_PATH) -> None:

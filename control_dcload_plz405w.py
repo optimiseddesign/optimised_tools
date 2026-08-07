@@ -201,6 +201,19 @@ def scpi_set(command: str, argument: str = "") -> None:
         sys.exit(1)
 
 
+def scpi_query_value(command: str) -> float:
+    """Send a query with a numeric reply and return it as a float.
+
+    Replies are plain numbers, e.g. "1.000"; print and exit on anything else.
+    """
+    reply = scpi_query(command)
+    try:
+        return float(reply)
+    except ValueError:
+        print(f"Reply to {command} was not numeric: {reply!r}")
+        sys.exit(1)
+
+
 def cmd_identify(print_results: bool = True) -> dict[str, str]:
     """Identify the load (*IDN?) and check it is the expected model.
 
@@ -255,12 +268,7 @@ def cmd_get_current(print_results: bool = True) -> float:
 
     Returns the setpoint as a float so other functions can use it.
     """
-    current_get = scpi_query(CMD_GET_CURRENT)
-    try:
-        current_get_amps = float(current_get)
-    except ValueError:
-        print(f"Get current returned non-numeric readback: {current_get!r}")
-        sys.exit(1)
+    current_get_amps = scpi_query_value(CMD_GET_CURRENT)
     if print_results:
         print(f"Get current: {current_get_amps:.3f} A")
     return current_get_amps
@@ -293,12 +301,7 @@ def cmd_get_voltage(print_results: bool = True) -> float:
 
     Returns the setpoint as a float so other functions can use it.
     """
-    voltage_get = scpi_query(CMD_GET_VOLTAGE)
-    try:
-        voltage_get_v = float(voltage_get)
-    except ValueError:
-        print(f"Get voltage returned non-numeric readback: {voltage_get!r}")
-        sys.exit(1)
+    voltage_get_v = scpi_query_value(CMD_GET_VOLTAGE)
     if print_results:
         print(f"Get voltage: {voltage_get_v:.3f} V")
     return voltage_get_v
@@ -421,12 +424,7 @@ def cmd_measure_voltage(print_results: bool = True) -> float:
 
     Returns the measured voltage as a float so other functions can use it.
     """
-    voltage = scpi_query(CMD_MEASURE_VOLTAGE)
-    try:
-        voltage_v = float(voltage)
-    except ValueError:
-        print(f"Measure voltage returned non-numeric value: {voltage!r}")
-        sys.exit(1)
+    voltage_v = scpi_query_value(CMD_MEASURE_VOLTAGE)
     if print_results:
         print(f"Measured voltage: {voltage_v:.3f} V")
     return voltage_v
@@ -440,12 +438,7 @@ def cmd_measure_current(print_results: bool = True) -> float:
 
     Returns the measured current as a float so other functions can use it.
     """
-    current = scpi_query(CMD_MEASURE_CURRENT)
-    try:
-        current_a = float(current)
-    except ValueError:
-        print(f"Measure current returned non-numeric value: {current!r}")
-        sys.exit(1)
+    current_a = scpi_query_value(CMD_MEASURE_CURRENT)
     if print_results:
         print(f"Measured current: {current_a:.3f} A")
     return current_a
