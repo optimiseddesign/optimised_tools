@@ -10,11 +10,11 @@ port, the other three instruments' LAN addresses) live in the drivers.
 
 The whole R/C sweep is repeated once per entry in OPERATING_POINTS, so one run
 covers what used to be one run per operating point. The PSU's voltage and
-current limit and the load's current are set per operating point, from
-OPERATING_POINTS and the table beside it, with the circuit powered down over
-the change and back up afterwards, and the run always ends powered down. The
-instrument ranges are still to come, as is the load's mode, so the load has to
-be left in CC on the bench.
+current limit, the load's current, both instruments' ranges and the load's mode
+are set per operating point, from OPERATING_POINTS and the table beside it,
+with the circuit powered down over the change and back up afterwards; the run
+always ends powered down. Nothing about the operating point is left to the
+bench.
 
 Outputs, all in a run folder named <timestamp>_bode_sweep <TEST_DESCRIPTION_SHORT>
 and prefixed with the run's start timestamp. Covering the whole run:
@@ -76,17 +76,14 @@ SWEEP_RESISTANCE_OHM = [22000, 27000, 33000, 39000, 47000, 56000, 68000, 82000, 
 SWEEP_CAPACITANCE_PF = [2200, 2700, 3300, 3900, 4700, 5600, 6800, 8200, 10000]
 
 # Operating Points to sweep at - Runs the sweep at each VIN, ILOAD pair such as
-# 9.5 V in at 1.5 A out. Pairs rather than two swept lists, so the points can
-# be scattered around the envelope rather than a full grid. Edited per run.
-OPERATING_POINTS = [
-    (9.5, 1.5),
-]
-
-# The instrument settings each operating point needs. The PSU and load ranges
-# join this table later.
-OPERATING_POINT_SETTINGS = {
-    # (vin_v, iout_a): settings
-    (9.5, 1.5): {"psu_output_num": 1, "psu_current_limit_a": 4.0},
+# 9.5 V in at 1.5 A out, with the instrument settings that point needs. Pairs
+# rather than two swept lists, so the points can be scattered around the
+# envelope rather than a full grid. Edited per run - comment out a line to skip
+# that point. Ranges use the drivers' names for what each one allows.
+#
+#   (vin_v, iout_a): (psu_output_num, psu_range_num,     psu_current_limit_a, dcload_mode,    dcload_current_range, dcload_voltage_range)
+OPERATING_POINTS = {
+    (9.5, 1.5):      (1,              psu.RANGE_15V_10A, 4.0,                 dcload.MODE_CC, dcload.RANGE_8A,      dcload.RANGE_15V),
 }
 TIME_SETTLE_S = 2.0                                # after each power step
 
@@ -337,20 +334,29 @@ def set_operating_point(operating_point: tuple[float, float]) -> None:
 
     Powers down before changing anything and back up afterwards, so the
     circuit never passes through a setpoint pair that is not an operating
-    point. The load must already be in CC mode; the ranges follow.
+    point - and because the ranges and the load's mode are only settable
+    while both instruments are off.
     """
     global psu_output_num
     vin_v, iout_a = operating_point
-    settings = OPERATING_POINT_SETTINGS[operating_point]
-    psu_output_num = settings["psu_output_num"]
+    (psu_output_num, psu_range_num, psu_current_limit_a,
+     dcload_mode, dcload_current_range,
+     dcload_voltage_range) = OPERATING_POINTS[operating_point]
 
     # Power down, supply first, the load left on to drain the circuit
     psu.cmd_set_output_enable(psu_output_num, False)
     time.sleep(TIME_SETTLE_S)
     dcload.cmd_set_input_enable(False)
 
+    # Set the ranges and the load mode, all of which are refused while live,
+    # and the ranges before the setpoints, which a lower range would clamp
+    psu.cmd_set_range(psu_output_num, psu_range_num)
+    dcload.cmd_set_mode(dcload_mode)
+    dcload.cmd_set_current_range(dcload_current_range)
+    dcload.cmd_set_voltage_range(dcload_voltage_range)
+
     # Set the PSU current limit, the PSU voltage, then the load current
-    psu.cmd_set_current(psu_output_num, settings["psu_current_limit_a"])
+    psu.cmd_set_current(psu_output_num, psu_current_limit_a)
     psu.cmd_set_voltage(psu_output_num, vin_v)
     dcload.cmd_set_current(iout_a)
 

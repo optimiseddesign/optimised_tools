@@ -96,6 +96,15 @@ RANGE_LOW  = "LOW"                    # current 0.8 A; voltage 15 V
 RANGE_MED  = "MED"                    # current 8 A (current axis only)
 RANGE_HIGH = "HIGH"                   # current 80 A; voltage 150 V
 
+# The same three named by what they allow, for callers that would rather say
+# the rating than the size. Worth having because LOW means 0.8 A to
+# cmd_set_current_range() but 15 V to cmd_set_voltage_range().
+RANGE_0A8  = RANGE_LOW
+RANGE_8A   = RANGE_MED
+RANGE_80A  = RANGE_HIGH
+RANGE_15V  = RANGE_LOW
+RANGE_150V = RANGE_HIGH
+
 # Single shared session objects (used by all functions); created by
 # open_connection(), both None until then
 resource_manager = None           # PyVISA resource manager, owns the backend

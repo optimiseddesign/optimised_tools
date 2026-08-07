@@ -131,6 +131,21 @@ RANGE_LIMITS = {
     3: {1: (5.5, 3.0), 2: (12.0, 1.5)}}
 RANGES_USING_OUTPUT2 = (4, 5, 6, 7)  # output 1 ranges that consume output 2
 
+# The same indices named by what they allow, for callers that would rather say
+# the rating than the index. An index means different things on different
+# outputs, so each name says which output it is for; cmd_set_range() checks
+# the index exists on the output, but cannot tell that 1 was meant as output
+# 3's 5.5 V range rather than output 1's 30 V one.
+RANGE_30V_6A  = 1   # output 1 or 2
+RANGE_15V_10A = 2   # output 1 or 2
+RANGE_60V_3A  = 3   # output 1 or 2
+RANGE_30V_12A = 4   # output 1 only, borrows output 2
+RANGE_15V_20A = 5   # output 1 only, borrows output 2
+RANGE_60V_6A  = 6   # output 1 only, borrows output 2
+RANGE_120V_3A = 7   # output 1 only, borrows output 2
+RANGE_5V5_3A  = 1   # output 3 only
+RANGE_12V_1A5 = 2   # output 3 only
+
 # Every setpoint is read back to confirm it landed, so the comparison has to
 # allow for the PSU rounding to its own resolution: 1 mV / 1 mA on outputs 1
 # and 2, but 10 mV / 10 mA on output 3. Rounding to nearest can only move a
