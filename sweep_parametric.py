@@ -8,21 +8,25 @@ control_dcload_plz405w.py (Kikusui PLZ405W) supply and load the circuit at the
 operating point the sweep is measured at. Connection settings (the probe's COM
 port, the other three instruments' LAN addresses) live in the drivers.
 
-The PSU and the load are opened and identified but not yet commanded: the
-operating point is still set by hand on the bench, and driving it is being
-added a step at a time.
+The whole R/C sweep is repeated once per entry in OPERATING_POINTS, so one run
+covers what used to be one run per operating point. The PSU and the load are
+opened and identified but not yet commanded: the operating point itself is
+still set by hand on the bench, and driving it is being added a step at a time.
 
-Outputs, all in a sub-folder named <timestamp>_bode_sweep_<TEST_DESCRIPTION_SHORT>
-and prefixed with the run's start timestamp:
-  - a raw Bode CSV per R/C point (frequency/gain/phase);
-  - a scope screenshot PNG per R/C point, markers on the crossovers;
-  - a summary CSV, one row per point, appended immediately after each point;
-  - four matrix CSVs for graphing (rows = capacitance, columns = resistance):
-    phase margin, gain margin, gain crossover frequency and phase crossover
-    frequency, rewritten in full after each point;
+Outputs, all in a run folder named <timestamp>_bode_sweep <TEST_DESCRIPTION_SHORT>
+and prefixed with the run's start timestamp. Covering the whole run:
+  - a summary CSV, one row per R/C point of every operating point, appended
+    immediately after each point;
   - a log.txt of everything the script prints (stderr too, so tracebacks
     and warnings are kept), headed by TEST_DESCRIPTION (a manual note of
     the test circumstances, edited per run).
+Then a sub-folder per operating point, named for it, holding what a run of one
+operating point used to produce:
+  - a raw Bode CSV per R/C point (frequency/gain/phase);
+  - a scope screenshot PNG per R/C point, markers on the crossovers;
+  - four matrix CSVs for graphing (rows = capacitance, columns = resistance):
+    phase margin, gain margin, gain crossover frequency and phase crossover
+    frequency, rewritten in full after each point.
 An interrupted run therefore keeps every completed point on disk.
 
 Scope signal configuration (channels, generator amplitude, sweep range,
@@ -55,36 +59,56 @@ import control_psu_mx180tp as psu
 
 # --- Sweep configuration ------------------------------------------------------
 # Manual note of the test circumstances, logged at the start of the run
-TEST_DESCRIPTION = ("PT136F 1.0 1A Charger with LTC4020 (plus Cff 100pF, VIN_REG Disabled, ILIMIT override disabled, VFBMAX 11k 47k for 14.5V) - Varying ITH, fixed VC 150pF 120k. At 9.5V In, 1.5A Out.")
+TEST_DESCRIPTION = ("PT136F 1.0 1A Charger with LTC4020 (plus Cff 100pF, VIN_REG Disabled, ILIMIT override disabled, VFBMAX 11k 47k for 14.5V) - Varying ITH, fixed VC 150pF 120k.")
 
 # Short version used to name the run's output folder (not the files in it);
-# use only characters legal in a folder name (no \ / : * ? " < > |)
-TEST_DESCRIPTION_SHORT = "9.5V In 1.5A Out - ITH vary with VC 150pF 120k"
+# use only characters legal in a folder name (no \ / : * ? " < > |). The
+# operating points are no longer part of it - a run covers several, and each
+# gets its own sub-folder named after itself.
+TEST_DESCRIPTION_SHORT = "ITH vary with VC 150pF 120k"
 
 # Values to test, manually defined per run.
 # Outer loop is capacitance, inner resistance, matching the matrix CSV layout.
 SWEEP_RESISTANCE_OHM = [22000, 27000, 33000, 39000, 47000, 56000, 68000, 82000, 100000]
 SWEEP_CAPACITANCE_PF = [2200, 2700, 3300, 3900, 4700, 5600, 6800, 8200, 10000]
 
-# --- Output configuration -----------------------------------------------------
+# Operating Points to sweep at - Runs the sweep at each VIN, ILOAD pair such as
+# 9.5 V in at 1.5 A out. Pairs rather than two swept lists, so the points can
+# be scattered around the envelope rather than a full grid. Edited per run.
+OPERATING_POINTS = [
+    (9.5, 1.5),
+]
+
+# --- Output configuration (run-level) -----------------------------------------
+# The run folder, its log, and the summary CSV. The summary spans the whole
+# run, so each row names its operating point.
 RUN_TIMESTAMP    = time.strftime("%Y%m%d_%H%M%S")  # shared by all files of a run
-RUN_DIR          = RUN_TIMESTAMP + "_bode_sweep " + TEST_DESCRIPTION_SHORT  # run sub-folder
+RUN_DIR          = RUN_TIMESTAMP + "_bode_sweep " + TEST_DESCRIPTION_SHORT
 RUN_PREFIX       = os.path.join(RUN_DIR, RUN_TIMESTAMP)  # folder + filename stem
-CSV_BODE_NAME    = RUN_PREFIX + "_bode_c{c}pf_r{r}ohm.csv"  # per-point raw data
-PNG_BODE_NAME    = RUN_PREFIX + "_bode_c{c}pf_r{r}ohm.png"  # per-point screenshot
 CSV_SUMMARY_NAME = RUN_PREFIX + "_summary.csv"     # one row of margins per point
 LOG_NAME         = RUN_PREFIX + "_log.txt"         # everything the script prints
-CSV_MATRIX_NAMES = {                               # margin key -> matrix file
-    "phase_margin_deg":   RUN_PREFIX + "_phase_margin_deg.csv",
-    "gain_margin_db":     RUN_PREFIX + "_gain_margin_db.csv",
-    "gain_crossover_hz":  RUN_PREFIX + "_gain_crossover_hz.csv",
-    "phase_crossover_hz": RUN_PREFIX + "_phase_crossover_hz.csv"}
 SUMMARY_COLUMNS  = ("timestamp",
+                    "target_vin_v", "target_iout_a",
                     "target_resistance_ohm", "actual_resistance_ohm",
                     "target_capacitance_pf", "actual_capacitance_pf",
                     "gain_crossover_hz", "phase_margin_deg",
                     "phase_crossover_hz", "gain_margin_db")
-MATRIX_CORNER    = "c_pf\\r_ohm"                   # top-left axis-label cell
+
+# --- Output configuration (per operating point) -------------------------------
+# Each operating point gets a sub-folder of the run folder holding its Bode
+# CSVs, screenshots and four matrix CSVs. {point_dir} is that sub-folder's
+# name, from format_operating_point(); {c} and {r} are the R/C point. So a
+# path reads <run>/9.5V in 1.5A out/<timestamp>_bode_c2200pf_r22000ohm.csv.
+OPERATING_POINT_DIR    = "{vin:g}V in {iout:g}A out"
+OPERATING_POINT_PREFIX = os.path.join(RUN_DIR, "{point_dir}", RUN_TIMESTAMP)
+CSV_BODE_NAME          = OPERATING_POINT_PREFIX + "_bode_c{c}pf_r{r}ohm.csv"
+PNG_BODE_NAME          = OPERATING_POINT_PREFIX + "_bode_c{c}pf_r{r}ohm.png"
+CSV_MATRIX_NAMES       = {                         # margin key -> matrix file
+    "phase_margin_deg":   OPERATING_POINT_PREFIX + "_phase_margin_deg.csv",
+    "gain_margin_db":     OPERATING_POINT_PREFIX + "_gain_margin_db.csv",
+    "gain_crossover_hz":  OPERATING_POINT_PREFIX + "_gain_crossover_hz.csv",
+    "phase_crossover_hz": OPERATING_POINT_PREFIX + "_phase_crossover_hz.csv"}
+MATRIX_CORNER          = "c_pf\\r_ohm"             # top-left axis-label cell
 
 # Margins of every completed point, keyed (capacitance pF, resistance ohm);
 # shared so the matrix CSVs can be rewritten in full after each point
@@ -131,7 +155,31 @@ def open_log() -> None:
     print(f"Test description: {TEST_DESCRIPTION}")
     print(f"Sweep resistances : {SWEEP_RESISTANCE_OHM} ohm")
     print(f"Sweep capacitances: {SWEEP_CAPACITANCE_PF} pF")
+    print(f"Operating points  : "
+          + "; ".join(format_operating_point(operating_point)
+                      for operating_point in OPERATING_POINTS))
     print(f"\n")
+
+
+def format_operating_point(operating_point: tuple[float, float]) -> str:
+    """One operating point as text - "9.5V in 1.5A out".
+
+    Used both as its output sub-folder's name and in the log, so a folder is
+    easy to match to the run it came from; :g keeps 30.0 as "30" and 9.5 as
+    "9.5", and the result has no character illegal in a folder name.
+    """
+    vin_v, iout_a = operating_point
+    return OPERATING_POINT_DIR.format(vin=vin_v, iout=iout_a)
+
+
+def open_operating_point_dir(operating_point_dir: str) -> None:
+    """Create one operating point's output sub-folder."""
+    path = os.path.join(RUN_DIR, operating_point_dir)
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError as exc:
+        print(f"Could not create {path}: {exc}")
+        sys.exit(1)
 
 
 def open_instruments() -> None:
@@ -160,7 +208,8 @@ def close_instruments() -> None:
     dcload.close_connection()
 
 
-def append_summary_row(r_ohm: int, c_pf: int,
+def append_summary_row(operating_point: tuple[float, float],
+                       r_ohm: int, c_pf: int,
                        config: dict[str, float],
                        margins: dict[str, float | None]) -> None:
     """Append one point to the summary CSV (header first on a new file).
@@ -168,7 +217,9 @@ def append_summary_row(r_ohm: int, c_pf: int,
     Margins without a crossing are None and appear as empty cells - a
     legitimate result, not an error.
     """
+    vin_v, iout_a = operating_point
     row = (time.strftime("%Y-%m-%d %H:%M:%S"),
+           vin_v, iout_a,
            r_ohm, config["total_resistance_ohm"],
            c_pf, config["total_capacitance_pf"],
            margins["gain_crossover_hz"], margins["phase_margin_deg"],
@@ -185,16 +236,18 @@ def append_summary_row(r_ohm: int, c_pf: int,
     print(f"Summary row appended to {CSV_SUMMARY_NAME}")
 
 
-def write_matrix_csvs() -> None:
+def write_matrix_csvs(operating_point_dir: str) -> None:
     """Rewrite the four margin matrix CSVs from all points measured so far.
 
     A matrix row is only complete once every resistance for that capacitance
     has been measured, so the files are rewritten in full after each point
     rather than appended; they always reflect every completed measurement.
     Axes are the target values; cells are empty when not yet measured or when
-    the margin has no crossing.
+    the margin has no crossing. They hold one operating point's margins, and
+    live in that operating point's sub-folder.
     """
-    for key, path in CSV_MATRIX_NAMES.items():
+    for key, name in CSV_MATRIX_NAMES.items():
+        path = name.format(point_dir=operating_point_dir)
         try:
             with open(path, "w", newline="") as file:
                 writer = csv.writer(file)
@@ -208,11 +261,15 @@ def write_matrix_csvs() -> None:
         except OSError as exc:
             print(f"Could not write {path}: {exc}")
             sys.exit(1)
-    print("Matrix CSVs updated: " + ", ".join(CSV_MATRIX_NAMES.values()))
+    print("Matrix CSVs updated: "
+          + ", ".join(name.format(point_dir=operating_point_dir)
+                      for name in CSV_MATRIX_NAMES.values()))
 
 
-def measure_point(r_ohm: int, c_pf: int) -> None:
+def measure_point(operating_point: tuple[float, float],
+                  r_ohm: int, c_pf: int) -> None:
     """Measure one R/C point and record it in every output CSV."""
+    operating_point_dir = format_operating_point(operating_point)
     probe.cmd_set_resistance(r_ohm)
     probe.cmd_set_capacitance(c_pf)
     config = probe.cmd_get_configuration(False)
@@ -224,23 +281,37 @@ def measure_point(r_ohm: int, c_pf: int) -> None:
     margins = scope.compute_bode_margins(data)
     scope.cmd_bode_set_markers(margins["gain_crossover_hz"],
                                margins["phase_crossover_hz"])
-    scope.cmd_save_screenshot(PNG_BODE_NAME.format(r=r_ohm, c=c_pf))
-    scope.save_bode_csv(data, CSV_BODE_NAME.format(r=r_ohm, c=c_pf))
+    scope.cmd_save_screenshot(
+        PNG_BODE_NAME.format(point_dir=operating_point_dir, r=r_ohm, c=c_pf))
+    scope.save_bode_csv(
+        data, CSV_BODE_NAME.format(point_dir=operating_point_dir,
+                                   r=r_ohm, c=c_pf))
 
-    append_summary_row(r_ohm, c_pf, config, margins)
+    append_summary_row(operating_point, r_ohm, c_pf, config, margins)
     results[(c_pf, r_ohm)] = margins
-    write_matrix_csvs()
+    write_matrix_csvs(operating_point_dir)
 
 
-def run_sweep() -> None:
+def run_sweep(operating_point: tuple[float, float], number: int) -> None:
     """Measure every R/C combination, recording all outputs as each completes."""
     total = len(SWEEP_CAPACITANCE_PF) * len(SWEEP_RESISTANCE_OHM)
     for c_pf in SWEEP_CAPACITANCE_PF:
         for r_ohm in SWEEP_RESISTANCE_OHM:
-            print(f"\nPoint {len(results) + 1} of {total}: "
+            print(f"\nOperating point {number} of {len(OPERATING_POINTS)} | "
+                  f"Point {len(results) + 1} of {total}: "
                   f"R={r_ohm} ohm, C={c_pf} pF")
-            measure_point(r_ohm, c_pf)
+            measure_point(operating_point, r_ohm, c_pf)
     print(f"\nSweep complete: {len(results)} of {total} point(s) measured")
+
+
+def set_operating_point(operating_point: tuple[float, float]) -> None:
+    """Put the circuit at one operating point, ready to be swept.
+
+    Prints the point only for now; the PSU and load setpoints, their ranges
+    and the output/input on-off sequencing are added a step at a time.
+    """
+    print(f"Set the supply and load to {format_operating_point(operating_point)}"
+          f" (still by hand - this script does not drive them yet)")
 
 
 def main() -> None:
@@ -251,8 +322,24 @@ def main() -> None:
         # Connect to all four instruments and confirm each one is alive
         open_instruments()
 
-        # Measure every R/C combination, recording results as each completes
-        run_sweep()
+        # Run the whole R/C sweep once at each operating point
+        for number, operating_point in enumerate(OPERATING_POINTS, start=1):
+            operating_point_dir = format_operating_point(operating_point)
+            print(f"\n=== Operating point {number} of "
+                  f"{len(OPERATING_POINTS)}: {operating_point_dir} ===")
+
+            set_operating_point(operating_point)
+
+            # Its own sub-folder, and its own margins: the matrix CSVs and the
+            # "point N of M" count cover one operating point, while the summary
+            # CSV is appended to and keeps every point of the whole run
+            open_operating_point_dir(operating_point_dir)
+            results.clear()
+
+            run_sweep(operating_point, number)
+
+        print(f"\nRun complete: "
+              f"{len(OPERATING_POINTS)} operating point(s) swept")
     finally:
         # However the run ends - finished, Ctrl+C, or a driver's sys.exit(1)
         # on an instrument error - hand every instrument back
