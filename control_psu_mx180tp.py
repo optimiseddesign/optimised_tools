@@ -50,10 +50,10 @@ Connection:
     clears it. Taking the lock again is harmless, as is releasing it twice.
   - Any command puts the instrument into the remote state, which locks its
     keyboard, so close_connection() sends LOCAL to hand the front panel back.
-    LOCAL takes effect at once, without needing the socket closed. Note that
-    the error paths below exit without reaching close_connection(), so a run
-    that fails leaves the keyboard locked until the front panel LOCAL key is
-    pressed or another run completes.
+    LOCAL takes effect at once, without needing the socket closed. The error
+    paths below exit rather than return, so open_connection() registers
+    close_connection() with atexit: the lock is released and the panel handed
+    back however a run ends, an unhandled exception included.
   - Commands from the TTi MX180T & MX180TP instruction manual issue 5,
     Remote Commands chapter 13; LAN interface details from chapter 12.2.4.
 
@@ -64,6 +64,7 @@ Copyright Optimised Product Design Ltd 2026. Available for public use
 (copyright reserved) - see repository README; use at your own risk.
 """
 
+import atexit
 import socket
 import sys
 
@@ -147,6 +148,10 @@ sock = None
 def open_connection() -> None:
     """Open the LAN socket and take exclusive control of the PSU."""
     lan_open()
+    # Unlock and hand the panel back however the run ends, error paths and
+    # unhandled exceptions included; close_connection() is idempotent, so the
+    # explicit call at the end of main() still works.
+    atexit.register(close_connection)
     # Clear the status registers, including the power-on bit that would
     # otherwise be read as an error by the first scpi_set(). Deliberately no
     # *RST: the output settings on the PSU must be preserved.
