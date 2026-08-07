@@ -129,6 +129,16 @@ RANGE_LIMITS = {
     3: {1: (5.5, 3.0), 2: (12.0, 1.5)}}
 RANGES_USING_OUTPUT2 = (4, 5, 6, 7)  # output 1 ranges that consume output 2
 
+# Every setpoint is read back to confirm it landed, so the comparison has to
+# allow for the PSU rounding to its own resolution: 1 mV / 1 mA on outputs 1
+# and 2, but 10 mV / 10 mA on output 3. Rounding to nearest can only move a
+# value by half a step, but the tolerance is a whole one: at exactly half a
+# step the comparison is a floating point knife edge - 0.110 - 0.105 comes out
+# as 0.0050000000000000044 - and one step is still far tighter than any
+# setpoint that failed to take effect at all.
+TOLERANCE_VOLTAGE_V = 0.01
+TOLERANCE_CURRENT_A = 0.01
+
 # Single shared socket (used by all functions); created by open_connection()
 sock = None
 
@@ -280,8 +290,8 @@ def format_range(output: int, range_index: int) -> str:
         return f"{range_index} ({limits[0]:g} V / {limits[1]:g} A max)"
 
 
-def cmd_set_voltage(output: int, volts: float) -> None:
-    """Set output <output>'s voltage setpoint.
+def cmd_set_voltage(output: int, volts: float) -> float:
+    """Set output <output>'s voltage setpoint, then read it back to confirm.
 
     Takes effect whether the output is on or off. The PSU rounds to its own
     resolution (1 mV on outputs 1 and 2, 10 mV on output 3) and rejects a
@@ -289,24 +299,44 @@ def cmd_set_voltage(output: int, volts: float) -> None:
     the range first where needed - see cmd_set_range(). The manual's "with
     verify" form (V<N>V) is deliberately not used: it waits for the output to
     reach the value, which never happens while the output is off.
+
+    Returns the confirmed setpoint as a float so other functions can use it.
     """
     check_output(output)
     scpi_set(CMD_SET_VOLTAGE.format(output=output), f"{volts:.3f}")
-    print(f"Output {output} voltage set to {volts:.3f} V")
+
+    volts_get = cmd_get_voltage(output, False)
+    if abs(volts_get - volts) <= TOLERANCE_VOLTAGE_V:
+        print(f"Output {output} voltage set to {volts:.3f} V (confirmed)")
+    else:
+        print(f"Output {output} voltage set to {volts:.3f} V but reads back "
+              f"{volts_get:.3f} V")
+        sys.exit(1)
+    return volts_get
 
 
-def cmd_set_current(output: int, amps: float) -> None:
-    """Set output <output>'s current limit.
+def cmd_set_current(output: int, amps: float) -> float:
+    """Set output <output>'s current limit, then read it back to confirm.
 
     Rounded and range-checked by the PSU as cmd_set_voltage() describes; the
     resolution is 1 mA on outputs 1 and 2, 10 mA on output 3.
+
+    Returns the confirmed limit as a float so other functions can use it.
     """
     check_output(output)
     scpi_set(CMD_SET_CURRENT.format(output=output), f"{amps:.3f}")
-    print(f"Output {output} current limit set to {amps:.3f} A")
+
+    amps_get = cmd_get_current(output, False)
+    if abs(amps_get - amps) <= TOLERANCE_CURRENT_A:
+        print(f"Output {output} current limit set to {amps:.3f} A (confirmed)")
+    else:
+        print(f"Output {output} current limit set to {amps:.3f} A but reads "
+              f"back {amps_get:.3f} A")
+        sys.exit(1)
+    return amps_get
 
 
-def cmd_set_range(output: int, range_index: int) -> None:
+def cmd_set_range(output: int, range_index: int) -> int:
     """Set output <output>'s voltage/current range, as listed in RANGE_LIMITS.
 
     A range change is refused with execution error 104 while more than 0.5 V
@@ -320,6 +350,8 @@ def cmd_set_range(output: int, range_index: int) -> None:
     stops responding: its commands are refused with execution error 103 and
     its queries are answered with silence, so a query surfaces here as a read
     timeout rather than as the underlying error.
+
+    Returns the confirmed range index as an int so other functions can use it.
     """
     check_output(output)
     if range_index not in RANGE_LIMITS[output]:
@@ -328,24 +360,42 @@ def cmd_set_range(output: int, range_index: int) -> None:
         sys.exit(1)
 
     scpi_set(CMD_SET_RANGE.format(output=output), str(range_index))
-    print(f"Output {output} range set to {format_range(output, range_index)}")
+    index_get = cmd_get_range(output, False)
+    if index_get == range_index:
+        print(f"Output {output} range set to "
+              f"{format_range(output, range_index)} (confirmed)")
+    else:
+        print(f"Output {output} range set to {range_index} but reads back "
+              f"{index_get}")
+        sys.exit(1)
     if output == 1 and range_index in RANGES_USING_OUTPUT2:
         print("  note: output 2 is unavailable until output 1 leaves this range")
+    return index_get
 
 
-def cmd_set_output_enable(output: int, on: bool) -> None:
-    """Enable or disable output <output>.
+def cmd_set_output_enable(output: int, on: bool) -> bool:
+    """Enable or disable output <output>, then read it back to confirm.
 
     Enabling energises the terminals at once, with no ramp, at whatever
     setpoints and range are already in force - so set those first. Disabling
     leaves them untouched, ready to be enabled again. The manual's OPALL,
     which switches all three outputs on a configurable delay sequence, is
     deliberately not used: each output is switched explicitly here.
+
+    Returns the confirmed output state as a bool so other functions can use it.
     """
     check_output(output)
     scpi_set(CMD_SET_OUTPUT_ENABLE.format(output=output),
              ARG_OUTPUT_ENABLE if on else ARG_OUTPUT_DISABLE)
-    print(f"Output {output} switched {'ON' if on else 'OFF'}")
+
+    on_get = cmd_get_output_enable(output, False)
+    if on_get == on:
+        print(f"Output {output} switched {'ON' if on else 'OFF'} (confirmed)")
+    else:
+        print(f"Output {output} switched {'ON' if on else 'OFF'} but reads "
+              f"back {'ON' if on_get else 'OFF'}")
+        sys.exit(1)
+    return on_get
 
 
 def cmd_get_settings(output: int,
