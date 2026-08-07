@@ -543,6 +543,7 @@ def available_outputs() -> tuple[int, ...]:
 
 
 def close_connection() -> None:
+    """Unlock the PSU, hand its front panel back and close the socket."""
     global sock
     if sock is not None:
         scpi_query(CMD_LOCK_OFF)  # reply is the resulting state, of no use here

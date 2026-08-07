@@ -79,7 +79,7 @@ else:
 CMD_CLEAR_STATUS   = "*CLS"           # clear status registers and error queue
 CMD_GET_IDENTITY   = "*IDN?"          # manufacturer,model,serial,firmware
 CMD_GET_OPTIONS    = "*OPT?"          # installed options, comma-separated
-CMD_GET_ERROR      = "SYSTem:ERRor?"  # oldest error in the queue; "0,..." = none
+CMD_GET_ERROR      = "SYSTem:ERRor?"  # oldest error in the queue, code first
 CMD_FORMAT_ASCII   = "FORMat ASC"     # data queries reply in ASCII, comma-separated
 CMD_BODE_ENABLE_ON = "BPLot:ENABle ON"  # opens the Bode plot application
 CMD_BODE_RUN       = "BPLot:STATe RUN"  # starts a Bode sweep
@@ -97,9 +97,12 @@ CMD_BODE_GET_MARK1_PHASE = "BPLot:MARKer1:PHASe?"      # phase at marker, deg
 CMD_BODE_GET_MARK2_PHASE = "BPLot:MARKer2:PHASe?"
 CMD_SCREENSHOT_FORMAT    = "HCOPy:LANGuage PNG"  # screenshot image format
 CMD_GET_SCREENSHOT       = "HCOPy:DATA?"      # screenshot as 488.2 block data
-REPLY_NO_ERROR     = "0,"             # SYSTem:ERRor? reply prefix when queue empty
+REPLY_NO_ERROR     = 0                # error code when the queue is empty
 REPLY_BODE_STOP    = "STOP"           # BPLot:STATe? reply once the sweep finished
 OPTION_BODE        = "K36"            # Bode plot application option (RTB-K36)
+IDENTITY_FIELDS    = 4                # *IDN? reply has four comma-separated fields
+MODEL_EXPECTED     = "RTB2"           # family prefix - the whole RTB2000 series
+                                      # shares the Bode plot command set
 TIMEOUT_BODE_S     = 120              # max sweep time (low start freqs are slow).
                                       # 200 Hz start, 50 points/decade = 185
                                       # points measured approx 80s, keep
@@ -280,7 +283,9 @@ def scpi_set(command: str, argument: str = "") -> None:
         command = command + " " + argument
     scpi_send(command)
     error = scpi_query(CMD_GET_ERROR)
-    if error.startswith(REPLY_NO_ERROR):
+    # Reply is code,"description" - compare the code as an int so a stray "0"
+    # in the description cannot match
+    if int(error.split(",")[0]) == REPLY_NO_ERROR:
         return                    # command accepted
     else:
         print(f"Command {command} failed: {error}")
@@ -288,17 +293,22 @@ def scpi_set(command: str, argument: str = "") -> None:
 
 
 def cmd_identify(print_results: bool = True) -> dict[str, str]:
-    """Identify the scope (*IDN?) and check the Bode plot option is installed.
+    """Identify the scope (*IDN?), check the model and the Bode plot option.
 
     Returns a dict of strings so other functions can use the results.
     """
     identity = scpi_query(CMD_GET_IDENTITY)
     fields = identity.split(",")
-    if len(fields) == 4:
+    if len(fields) == IDENTITY_FIELDS:
         keys = ("manufacturer", "model", "serial", "version_fw")
         info = dict(zip(keys, (field.strip() for field in fields)))
     else:
         print(f"Identify failed: unexpected reply {identity!r}")
+        sys.exit(1)
+
+    if not info["model"].startswith(MODEL_EXPECTED):
+        print(f"Expected an RTB2000 series model but found {info['model']!r}: "
+              f"its remote command set may differ")
         sys.exit(1)
 
     options = scpi_query(CMD_GET_OPTIONS)
@@ -544,6 +554,7 @@ def save_bode_csv(data: dict[str, list[float]], path: str = CSV_PATH) -> None:
 
 
 def close_connection() -> None:
+    """Close the connection in use; a no-op if it was never opened."""
     global instrument
     if CONNECTION == CONNECTION_LAN:
         if instrument is not None:

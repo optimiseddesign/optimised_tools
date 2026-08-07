@@ -37,6 +37,7 @@ Connection:
 
 Requires: PyVISA and its pure-Python backend (pip install pyvisa pyvisa-py).
 Python 3.13.
+Tested against PLZ405W firmware IFC1.08.0002 FPGA1.00.004 IOC1.00.000.
 
 Copyright Optimised Product Design Ltd 2026. Available for public use
 (copyright reserved) - see repository README; use at your own risk.
@@ -51,10 +52,11 @@ import pyvisa
 LAN_ADDRESS     = "192.168.10.34"  # load IP: its LAN settings menu / web page
 LAN_RESOURCE    = f"TCPIP::{LAN_ADDRESS}::5025::SOCKET"  # SCPI-RAW, port 5025
 VISA_BACKEND    = "@py"           # pyvisa-py, pure Python; "" uses vendor VISA
-TIMEOUT_OPEN_S  = 5.0             # TCP connect wait (pyvisa-py defaults to 10 s)
+TIMEOUT_CONNECT_S = 5.0           # TCP connect wait (pyvisa-py defaults to 10 s)
 TIMEOUT_READ_S  = 2.0             # per-reply read timeout
 TX_EOL          = "\n"            # commands sent with bare LF
-RX_EOL          = "\n"            # reply lines terminated with LF
+RX_EOL          = "\n"            # reply lines terminated with LF; str rather
+                                  # than bytes - PyVISA's terminators are str
 MS_PER_S        = 1000            # PyVISA timeouts are in milliseconds
 
 # --- Protocol constants -------------------------------------------------------
@@ -133,12 +135,12 @@ def open_connection() -> None:
 def lan_open() -> None:
     """Open the PyVISA LAN session; print and exit on failure."""
     global resource_manager, dcload
-    print(f"Opening DC load at {LAN_RESOURCE}")
+    print(f"Opening DC Load at {LAN_RESOURCE}")
 
     try:
         resource_manager = pyvisa.ResourceManager(VISA_BACKEND)
         dcload = resource_manager.open_resource(
-            LAN_RESOURCE, open_timeout=int(TIMEOUT_OPEN_S * MS_PER_S))
+            LAN_RESOURCE, open_timeout=int(TIMEOUT_CONNECT_S * MS_PER_S))
     except Exception as exc:
         # Typical causes: load off, LAN unplugged, or wrong LAN_ADDRESS.
         # Caught broadly because pyvisa-py raises a bare Exception here, not
@@ -237,14 +239,14 @@ def cmd_set_current(amps: float) -> float:
 
     amps_get = cmd_get_current(print_results=False)
 
-    if abs(amps_get - amps) > CURRENT_TOLERANCE_A:
-        # Readback should match to the 3 d.p. sent; a real mismatch means the
-        # load silently clamped or ignored the value
+    if abs(amps_get - amps) <= CURRENT_TOLERANCE_A:
+        print(f"Set current: {amps:.3f} A ({amps_get:.3f} A confirmed)")
+    else:
+        # A mismatch beyond the range's resolution step means the load
+        # silently clamped or ignored the value
         print(f"Set current {amps:.3f} A but readback is {amps_get:.3f} A")
         sys.exit(1)
-    else:
-        print(f"Set current: {amps:.3f} A ({amps_get:.3f} A confirmed)")
-        return amps_get
+    return amps_get
 
 
 def cmd_get_current(print_results: bool = True) -> float:
@@ -275,14 +277,14 @@ def cmd_set_voltage(volts: float) -> float:
 
     volts_get = cmd_get_voltage(print_results=False)
 
-    if abs(volts_get - volts) > VOLTAGE_TOLERANCE_V:
-        # Readback should match to the 3 d.p. sent; a real mismatch means the
-        # load silently clamped or ignored the value
+    if abs(volts_get - volts) <= VOLTAGE_TOLERANCE_V:
+        print(f"Set voltage: {volts:.3f} V ({volts_get:.3f} V confirmed)")
+    else:
+        # A mismatch beyond the range's resolution step means the load
+        # silently clamped or ignored the value
         print(f"Set voltage {volts:.3f} V but readback is {volts_get:.3f} V")
         sys.exit(1)
-    else:
-        print(f"Set voltage: {volts:.3f} V ({volts_get:.3f} V confirmed)")
-        return volts_get
+    return volts_get
 
 
 def cmd_get_voltage(print_results: bool = True) -> float:
@@ -302,7 +304,7 @@ def cmd_get_voltage(print_results: bool = True) -> float:
     return voltage_get_v
 
 
-def require_input_disabled(action: str) -> None:
+def check_input_disabled(action: str) -> None:
     """Exit if the load input is enabled; call before changing mode/range.
 
     The load itself refuses a mode/range change while the input is on (SCPI
@@ -323,17 +325,17 @@ def cmd_set_mode(mode: str) -> str:
 
     Returns the confirmed mode as a string so other functions can use it.
     """
-    require_input_disabled("mode")
+    check_input_disabled("mode")
     scpi_set(CMD_SET_MODE, mode)
 
     mode_get = cmd_get_mode(print_results=False)
 
-    if mode_get != mode:
+    if mode_get == mode:
+        print(f"Set mode: {mode} (confirmed)")
+    else:
         print(f"Set mode {mode} but readback is {mode_get}")
         sys.exit(1)
-    else:
-        print(f"Set mode: {mode} (confirmed)")
-        return mode_get
+    return mode_get
 
 
 def cmd_get_mode(print_results: bool = True) -> str:
@@ -355,17 +357,17 @@ def cmd_set_current_range(range_: str) -> str:
 
     Returns the confirmed range as a string so other functions can use it.
     """
-    require_input_disabled("current range")
+    check_input_disabled("current range")
     scpi_set(CMD_SET_CURRENT_RANGE, range_)
 
     range_get = cmd_get_current_range(print_results=False)
 
-    if range_get != range_:
+    if range_get == range_:
+        print(f"Set current range: {range_} (confirmed)")
+    else:
         print(f"Set current range {range_} but readback is {range_get}")
         sys.exit(1)
-    else:
-        print(f"Set current range: {range_} (confirmed)")
-        return range_get
+    return range_get
 
 
 def cmd_get_current_range(print_results: bool = True) -> str:
@@ -387,17 +389,17 @@ def cmd_set_voltage_range(range_: str) -> str:
 
     Returns the confirmed range as a string so other functions can use it.
     """
-    require_input_disabled("voltage range")
+    check_input_disabled("voltage range")
     scpi_set(CMD_SET_VOLTAGE_RANGE, range_)
 
     range_get = cmd_get_voltage_range(print_results=False)
 
-    if range_get != range_:
+    if range_get == range_:
+        print(f"Set voltage range: {range_} (confirmed)")
+    else:
         print(f"Set voltage range {range_} but readback is {range_get}")
         sys.exit(1)
-    else:
-        print(f"Set voltage range: {range_} (confirmed)")
-        return range_get
+    return range_get
 
 
 def cmd_get_voltage_range(print_results: bool = True) -> str:
@@ -411,7 +413,7 @@ def cmd_get_voltage_range(print_results: bool = True) -> str:
     return range_get
 
 
-def cmd_measure_voltage() -> float:
+def cmd_measure_voltage(print_results: bool = True) -> float:
     """Measure the actual voltage at the load's input terminals.
 
     A live measurement, not a setpoint readback - valid whether or not the
@@ -425,11 +427,12 @@ def cmd_measure_voltage() -> float:
     except ValueError:
         print(f"Measure voltage returned non-numeric value: {voltage!r}")
         sys.exit(1)
-    print(f"Measured voltage: {voltage_v:.3f} V")
+    if print_results:
+        print(f"Measured voltage: {voltage_v:.3f} V")
     return voltage_v
 
 
-def cmd_measure_current() -> float:
+def cmd_measure_current(print_results: bool = True) -> float:
     """Measure the actual current through the load's input terminals.
 
     A live measurement, not a setpoint readback - valid whether or not the
@@ -443,7 +446,8 @@ def cmd_measure_current() -> float:
     except ValueError:
         print(f"Measure current returned non-numeric value: {current!r}")
         sys.exit(1)
-    print(f"Measured current: {current_a:.3f} A")
+    if print_results:
+        print(f"Measured current: {current_a:.3f} A")
     return current_a
 
 
@@ -459,13 +463,13 @@ def cmd_set_input_enable(on: bool) -> bool:
 
     on_get = cmd_get_input_enable(print_results=False)
 
-    if on_get != on:
+    if on_get == on:
+        print(f"Set input enable: {'ON' if on else 'OFF'} (confirmed)")
+    else:
         print(f"Set input enable {'ON' if on else 'OFF'} but readback is "
               f"{'ON' if on_get else 'OFF'}")
         sys.exit(1)
-    else:
-        print(f"Set input enable: {'ON' if on else 'OFF'} (confirmed)")
-        return on_get
+    return on_get
 
 
 def cmd_get_input_enable(print_results: bool = True) -> bool:
@@ -475,7 +479,7 @@ def cmd_get_input_enable(print_results: bool = True) -> bool:
     """
     input_get = scpi_query(CMD_GET_INPUT_ENABLE)
     if input_get not in ("0", "1"):
-        # Not treated as off: require_input_disabled() would then allow a
+        # Not treated as off: check_input_disabled() would then allow a
         # mode/range change while the input is actually on
         print(f"Get input enable returned unexpected reply: {input_get!r}")
         sys.exit(1)
@@ -486,6 +490,7 @@ def cmd_get_input_enable(print_results: bool = True) -> bool:
 
 
 def close_connection() -> None:
+    """Release the load's front panel and close the session; safe to repeat."""
     global dcload
     # LOCal is a no-op over this raw-socket transport (no REN line to
     # assert REMote in the first place) but is kept for when LAN_RESOURCE
