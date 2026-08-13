@@ -111,8 +111,8 @@ TIMEOUT_SCREEN_S   = 15.0             # screenshot PNG is tens of kB of binary
 POLL_BODE_S        = 1.0              # interval between sweep-state polls
 
 # --- Output configuration ------------------------------------------------------
-CSV_PATH        = "bode_result.csv"   # standalone-test outputs; the sweep
-SCREENSHOT_PATH = "bode_result.png"   # orchestrator will own file naming later
+CSV_PATH        = "bode_result.csv"   # defaults for the standalone test; the
+SCREENSHOT_PATH = "bode_result.png"   # sweep passes its own paths instead
 
 # --- Margin computation configuration -------------------------------------------
 MARGIN_FREQ_MIN_HZ  = 500.0           # bounds on the crossover search; tighten
@@ -211,7 +211,7 @@ def scpi_send(command: str) -> None:
 def scpi_query(command: str, timeout_s: float = TIMEOUT_READ_S) -> str:
     """Send a SCPI query and return its one-line reply; print and exit on timeout.
 
-    timeout_s allows slow queries (e.g. during a running Bode sweep) to wait
+    timeout_s allows slow queries (e.g. fetching the Bode data arrays) to wait
     longer. It applies per query and is set on every call.
     """
     if CONNECTION == CONNECTION_LAN:
