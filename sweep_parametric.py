@@ -96,7 +96,8 @@ RUN_PREFIX       = os.path.join(RUN_DIR, RUN_TIMESTAMP)  # folder + filename ste
 CSV_SUMMARY_NAME = RUN_PREFIX + "_summary.csv"     # one row of margins per point
 LOG_NAME         = RUN_PREFIX + "_log.txt"         # everything the script prints
 SUMMARY_COLUMNS  = ("timestamp",
-                    "target_vin_v", "target_iout_a",
+                    "target_vin_v", "actual_vin_v", "actual_iin_a",
+                    "target_iout_a", "actual_iout_a", "actual_vout_v",
                     "target_resistance_ohm", "actual_resistance_ohm",
                     "target_capacitance_pf", "actual_capacitance_pf",
                     "gain_crossover_hz", "phase_margin_deg",
@@ -234,6 +235,7 @@ def close_instruments() -> None:
 
 
 def append_summary_row(operating_point: tuple[float, float],
+                       measured: dict[str, float],
                        r_ohm: int, c_pf: int,
                        config: dict[str, float],
                        margins: dict[str, float | None]) -> None:
@@ -244,7 +246,8 @@ def append_summary_row(operating_point: tuple[float, float],
     """
     vin_v, iout_a = operating_point
     row = (time.strftime("%Y-%m-%d %H:%M:%S"),
-           vin_v, iout_a,
+           vin_v, measured["actual_vin_v"], measured["actual_iin_a"],
+           iout_a, measured["actual_iout_a"], measured["actual_vout_v"],
            r_ohm, config["total_resistance_ohm"],
            c_pf, config["total_capacitance_pf"],
            margins["gain_crossover_hz"], margins["phase_margin_deg"],
@@ -301,6 +304,17 @@ def measure_point(operating_point: tuple[float, float],
     print(f"Actual configuration: {config['total_resistance_ohm']:.1f} ohm, "
           f"{config['total_capacitance_pf']:.1f} pF")
 
+    # Read what the supply and load are really delivering, not what was asked
+    measured = {
+        "actual_vin_v":  psu.cmd_measure_voltage(psu_output_num, False),
+        "actual_iin_a":  psu.cmd_measure_current(psu_output_num, False),
+        "actual_vout_v": dcload.cmd_measure_voltage(False),
+        "actual_iout_a": dcload.cmd_measure_current(False)}
+    print(f"Actual operating point: {measured['actual_vin_v']:.3f} V in at "
+          f"{measured['actual_iin_a']:.3f} A, "
+          f"{measured['actual_vout_v']:.3f} V out at "
+          f"{measured['actual_iout_a']:.3f} A")
+
     scope.cmd_bode_run()
     data = scope.cmd_bode_get_data()
     margins = scope.compute_bode_margins(data)
@@ -312,7 +326,7 @@ def measure_point(operating_point: tuple[float, float],
         data, CSV_BODE_NAME.format(op_point_name=op_point_name,
                                    r=r_ohm, c=c_pf))
 
-    append_summary_row(operating_point, r_ohm, c_pf, config, margins)
+    append_summary_row(operating_point, measured, r_ohm, c_pf, config, margins)
     results[(c_pf, r_ohm)] = margins
     write_matrix_csvs(op_point_name)
 
