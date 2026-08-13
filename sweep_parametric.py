@@ -242,12 +242,15 @@ def append_summary_row(operating_point: tuple[float, float],
     """Append one point to the summary CSV (header first on a new file).
 
     Margins without a crossing are None and appear as empty cells - a
-    legitimate result, not an error.
+    legitimate result, not an error. The measured volts and amps are written
+    to 3 d.p., the resolution the instruments themselves report.
     """
     vin_v, iout_a = operating_point
     row = (time.strftime("%Y-%m-%d %H:%M:%S"),
-           vin_v, measured["actual_vin_v"], measured["actual_iin_a"],
-           iout_a, measured["actual_iout_a"], measured["actual_vout_v"],
+           vin_v, f"{measured['actual_vin_v']:.3f}",
+           f"{measured['actual_iin_a']:.3f}",
+           iout_a, f"{measured['actual_iout_a']:.3f}",
+           f"{measured['actual_vout_v']:.3f}",
            r_ohm, config["total_resistance_ohm"],
            c_pf, config["total_capacitance_pf"],
            margins["gain_crossover_hz"], margins["phase_margin_deg"],
@@ -349,7 +352,8 @@ def set_operating_point(operating_point: tuple[float, float]) -> None:
     Powers down before changing anything and back up afterwards, so the
     circuit never passes through a setpoint pair that is not an operating
     point - and because the ranges and the load's mode are only settable
-    while both instruments are off.
+    while both instruments are off. The compensation is set here too, so the
+    circuit is never energised on whatever the probe was left holding.
     """
     global psu_output_num
     vin_v, iout_a = operating_point
@@ -373,6 +377,12 @@ def set_operating_point(operating_point: tuple[float, float]) -> None:
     psu.cmd_set_current(psu_output_num, psu_current_limit_a)
     psu.cmd_set_voltage(psu_output_num, vin_v)
     dcload.cmd_set_current(iout_a)
+
+    # Set the compensation the sweep starts on, so the circuit powers up on a
+    # known pair rather than whatever the probe held; measure_point() sets it
+    # again for this point and every one after
+    probe.cmd_set_resistance(SWEEP_RESISTANCE_OHM[0])
+    probe.cmd_set_capacitance(SWEEP_CAPACITANCE_PF[0])
 
     # Power up, supply first, settling after each step
     psu.cmd_set_output_enable(psu_output_num, True)
