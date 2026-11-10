@@ -62,18 +62,21 @@ import control_psu_mx180tp as psu
 
 # --- Sweep configuration ------------------------------------------------------
 # Manual note of the test circumstances, logged at the start of the run
-TEST_DESCRIPTION = ("PT136F 1.0 1A Charger with LTC4020 (plus Cff 100pF, VIN_REG Disabled, ILIMIT override disabled, VFBMAX 11k 47k for 14.5V) - Varying ITH, fixed VC 150pF 120k.")
+TEST_DESCRIPTION = ("PT136F 1.0 1A PCB #3 with LTC4020 (plus Cff 100pF, VIN_REG Disabled, ILIMIT override disabled, VFBMAX 11k 47k for 14.5V, CSZ 20R 4u7, Switched ITH path 18nF 22k [disabled]) - NTC 0V and No Battery DCDC only - Varying ITH, fixed VC 150pF 120k.")
 
 # Short version used to name the run's output folder (not the files in it);
 # use only characters legal in a folder name (no \ / : * ? " < > |). The
 # operating points are no longer part of it - a run covers several, and each
 # gets its own sub-folder named after itself.
-TEST_DESCRIPTION_SHORT = "ITH vary with VC 150pF 120k"
+TEST_DESCRIPTION_SHORT = "ITH-variable-plus-switched_VC-150pF-120k"
 
 # Values to test, manually defined per run.
 # Outer loop is capacitance, inner resistance, matching the matrix CSV layout.
-SWEEP_RESISTANCE_OHM = [22000, 27000, 33000, 39000, 47000, 56000, 68000, 82000, 100000]
-SWEEP_CAPACITANCE_PF = [2200, 2700, 3300, 3900, 4700, 5600, 6800, 8200, 10000]
+#SWEEP_RESISTANCE_OHM = [22000, 27000, 33000, 39000, 47000, 56000, 68000, 82000, 100000]
+#SWEEP_CAPACITANCE_PF = [2200, 2700, 3300, 3900, 4700, 5600, 6800, 8200, 10000]
+
+SWEEP_RESISTANCE_OHM = [43000, 47000]
+SWEEP_CAPACITANCE_PF = [10000, 12000, 15000]
 
 # Operating Points to sweep at - Runs the sweep at each VIN, ILOAD pair such as
 # 9.5 V in at 1.5 A out, with the instrument settings that point needs. Pairs
@@ -83,7 +86,12 @@ SWEEP_CAPACITANCE_PF = [2200, 2700, 3300, 3900, 4700, 5600, 6800, 8200, 10000]
 #
 #   (vin_v, iout_a): (psu_output_num, psu_range_num,     psu_current_limit_a, dcload_mode,    dcload_current_range, dcload_voltage_range)
 OPERATING_POINTS = {
-    (9.5, 1.5):      (1,              psu.RANGE_15V_10A, 4.0,                 dcload.MODE_CC, dcload.RANGE_8A,      dcload.RANGE_15V),
+    (10, 0.3):       (1,              psu.RANGE_15V_10A, 3.0,                 dcload.MODE_CC, dcload.RANGE_8A,      dcload.RANGE_150V),
+    (10, 8.0):       (1,              psu.RANGE_15V_20A, 18.0,                dcload.MODE_CC, dcload.RANGE_8A,      dcload.RANGE_150V),
+    (15, 0.4):       (1,              psu.RANGE_15V_10A,  2.0,                 dcload.MODE_CC, dcload.RANGE_8A,      dcload.RANGE_150V),
+    (15, 12.0):      (1,              psu.RANGE_15V_20A, 16.0,                dcload.MODE_CC, dcload.RANGE_80A,     dcload.RANGE_150V),
+    (30, 0.6):       (1,              psu.RANGE_30V_6A,  2.0,                 dcload.MODE_CC, dcload.RANGE_8A,      dcload.RANGE_150V),
+    (30, 12.0):      (1,              psu.RANGE_30V_12A, 12.0,                dcload.MODE_CC, dcload.RANGE_80A,     dcload.RANGE_150V),
 }
 TIME_SETTLE_S = 2.0                                # after each power step
 
